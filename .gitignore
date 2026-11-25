@@ -1,0 +1,24 @@
+# Rust build artifacts & binaries
+/target/
+/Astralis.exe
+/*.zip
+
+# WebView2 & runtime caches
+/Astralis.exe.WebView2/
+/cache/
+
+# Legacy Python prototype files (replaced by pure Rust native app)
+/.venv/
+/__pycache__/
+/backend/
+/scripts/
+/app.py
+/requirements.txt
+/launch_debug.bat
+/test_verify.py
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

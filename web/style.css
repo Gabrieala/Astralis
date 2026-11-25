@@ -1,0 +1,1337 @@
+/* Astralis — Deep Velvet Midnight Star-Atlas UI */
+:root {
+  --glass-bg: rgba(5, 8, 18, 0.78);
+  --glass-border: rgba(150, 190, 255, 0.14);
+  --text-main: rgba(240, 246, 255, 0.94);
+  --text-dim: rgba(175, 196, 232, 0.58);
+  --accent: #8ec5ff;
+  --accent-bg: rgba(115, 180, 255, 0.20);
+  --lyric-scale: 1;
+  --lyric-font: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --lyric-style: normal;
+  --lyric-weight: 300;
+  --lyric-tracking: 0.08em;
+  --lyric-transform: none;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #010207;
+  color: var(--text-main);
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#sky-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: default;
+}
+
+body.mode-hemisphere #sky-canvas {
+  cursor: grab;
+}
+
+body.mode-hemisphere.is-dragging #sky-canvas {
+  cursor: grabbing;
+}
+
+/* Astronomical Hover Reticle & Star / Planet / Satellite Tooltip */
+.hover-ring {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 24px;
+  height: 24px;
+  margin-left: -12px;
+  margin-top: -12px;
+  border-radius: 999px;
+  border: 1px solid rgba(175, 220, 255, 0.72);
+  box-shadow: 0 0 12px rgba(135, 195, 255, 0.45);
+  pointer-events: none;
+  z-index: 12;
+  will-change: transform;
+}
+
+.sky-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: rgba(5, 9, 20, 0.90);
+  border: 1px solid rgba(160, 205, 255, 0.24);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.68);
+  pointer-events: none;
+  z-index: 15;
+  min-width: 170px;
+  max-width: 272px;
+  will-change: transform;
+}
+
+.tip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tip-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: 0.02em;
+}
+
+.tip-desig {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #9dcaff;
+  white-space: nowrap;
+}
+
+.tip-const {
+  margin-top: 2px;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(185, 212, 248, 0.68);
+}
+
+.tip-sub {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: rgba(215, 228, 250, 0.78);
+}
+
+.tip-fact {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(160, 205, 255, 0.14);
+  font-size: 10.5px;
+  line-height: 1.42;
+  color: rgba(198, 222, 255, 0.86);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* =========================================================================
+   3D Sky-Atlas Constellation Name Labels (Pooled, Zero-Reflow Overlay)
+   ========================================================================= */
+.sky-labels-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 6;
+}
+
+.sky-const-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  white-space: nowrap;
+  pointer-events: none;
+  will-change: transform, opacity;
+  opacity: 0;
+}
+
+.sky-const-name {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(188, 216, 255, 0.88);
+  text-shadow: 0 1px 10px rgba(1, 3, 10, 0.96), 0 0 8px rgba(105, 165, 255, 0.25);
+}
+
+.sky-const-label.is-focused .sky-const-name {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  color: rgba(232, 244, 255, 0.96);
+  text-shadow: 0 1px 14px rgba(1, 3, 10, 0.98), 0 0 14px rgba(135, 195, 255, 0.55);
+}
+
+.sky-const-sub {
+  font-size: 8px;
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(168, 200, 245, 0.62);
+  text-shadow: 0 1px 8px rgba(1, 3, 10, 0.96);
+}
+
+/* Toggleable Bright Proper Star Names on Sky */
+.star-labels-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 7;
+}
+
+.sky-star-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-size: 8.5px;
+  font-weight: 400;
+  letter-spacing: 0.09em;
+  color: rgba(145, 178, 224, 0.62);
+  text-shadow: 0 1px 6px rgba(1, 3, 10, 0.95);
+  white-space: nowrap;
+  pointer-events: none;
+  will-change: transform, opacity;
+  opacity: 0;
+}
+
+.sky-star-label.is-focused {
+  color: rgba(164, 196, 240, 0.74);
+}
+
+/* =========================================================================
+   Star-Adjacent Floating Glowing Lyric Layer
+   ========================================================================= */
+.star-lyric-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 8;
+}
+
+.star-word-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  will-change: transform, opacity;
+  transition: opacity 0.03s linear;
+  opacity: 0;
+}
+
+.star-word-tag.side-left {
+  flex-direction: row-reverse;
+}
+
+.star-word-tick {
+  width: 18px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(190, 224, 255, 0.85), rgba(190, 224, 255, 0.12));
+  box-shadow: 0 0 8px rgba(155, 210, 255, 0.7);
+  flex-shrink: 0;
+}
+
+.star-word-tag.side-left .star-word-tick {
+  background: linear-gradient(270deg, rgba(190, 224, 255, 0.85), rgba(190, 224, 255, 0.12));
+}
+
+.star-word-text {
+  font-family: var(--lyric-font);
+  font-style: var(--lyric-style);
+  font-size: calc(clamp(16px, 1.85vw, 24px) * var(--lyric-scale));
+  font-weight: var(--lyric-weight);
+  letter-spacing: var(--lyric-tracking);
+  text-transform: var(--lyric-transform);
+  color: #ffffff;
+  text-shadow:
+    0 0 12px rgba(215, 238, 255, 0.95),
+    0 0 28px rgba(120, 185, 255, 0.72),
+    0 2px 14px rgba(1, 3, 10, 0.95);
+  transition: transform 0.14s ease-out, color 0.14s ease-out;
+}
+
+.star-word-tag.is-active {
+  opacity: 1;
+}
+
+.star-word-tag.is-active .star-word-text {
+  transform: scale(1.04);
+}
+
+.star-word-tag.is-echo {
+  opacity: 0.30;
+}
+
+.star-word-tag.is-echo .star-word-text {
+  font-size: calc(clamp(13px, 1.35vw, 17px) * var(--lyric-scale));
+  color: rgba(195, 218, 250, 0.85);
+  text-shadow: 0 0 10px rgba(110, 170, 255, 0.35), 0 1px 8px rgba(0, 0, 0, 0.9);
+  transform: scale(0.95);
+}
+
+.star-word-tag.is-echo .star-word-tick {
+  width: 10px;
+  opacity: 0.45;
+}
+
+/* =========================================================================
+   Auto-Hiding Minimal Top HUD
+   ========================================================================= */
+.hud-top {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  z-index: 20;
+}
+
+body.hud-idle .hud-top,
+body.hud-idle .local-bar {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.hud-left {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  cursor: grab;
+}
+
+.hud-left:active {
+  cursor: grabbing;
+}
+
+.brand-star {
+  color: #bfe0ff;
+  font-size: 14px;
+  text-shadow: 0 0 10px rgba(155, 210, 255, 0.8);
+}
+
+.brand-name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  color: rgba(230, 240, 255, 0.92);
+}
+
+.divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(180, 210, 255, 0.16);
+}
+
+.source-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(110, 175, 255, 0.14);
+  border: 1px solid rgba(145, 200, 255, 0.24);
+  color: #b8dcff;
+  white-space: nowrap;
+}
+
+.track-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.track-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+.track-artist {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.hud-clock {
+  font-size: 10.5px;
+  color: rgba(190, 218, 255, 0.72);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lyrics-pill {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(80, 225, 190, 0.11);
+  border: 1px solid rgba(90, 235, 200, 0.22);
+  color: #8bf5da;
+  white-space: nowrap;
+}
+
+.lyrics-pill.loading {
+  background: rgba(255, 205, 110, 0.11);
+  border-color: rgba(255, 205, 110, 0.26);
+  color: #ffd88a;
+}
+
+.lyrics-pill.missing {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(200, 212, 235, 0.52);
+}
+
+.hud-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pill-group {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(180, 210, 255, 0.11);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.hud-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(215, 228, 250, 0.78);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  white-space: nowrap;
+}
+
+.hud-btn:hover {
+  background: rgba(150, 200, 255, 0.14);
+  color: #ffffff;
+}
+
+.hud-btn.active {
+  background: var(--accent-bg);
+  border-color: rgba(155, 210, 255, 0.34);
+  color: #ffffff;
+}
+
+.hud-btn.compact {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.hud-btn.icon-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.hud-btn.danger:hover {
+  background: rgba(255, 95, 110, 0.28);
+  color: #ffd5da;
+}
+
+/* Local / Demo mini playback bar */
+.local-bar {
+  position: fixed;
+  top: 62px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  z-index: 19;
+}
+
+.media-btn {
+  font-size: 13px !important;
+  padding: 3px 7px !important;
+}
+
+.play-btn {
+  background: rgba(125, 185, 255, 0.16);
+  border-color: rgba(155, 210, 255, 0.28);
+  color: #ffffff;
+  min-width: 28px;
+}
+
+.mini-div {
+  width: 1px;
+  height: 14px;
+  background: rgba(175, 208, 255, 0.16);
+  margin: 0 2px;
+}
+
+.local-bar input[type="range"] {
+  width: 170px;
+  accent-color: #93c9ff;
+  cursor: pointer;
+  height: 3px;
+}
+
+.time-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+}
+
+/* =========================================================================
+   Rich Visual Constellations & Settings Side Menu
+   ========================================================================= */
+.main-menu {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  width: 392px;
+  max-height: calc(100vh - 88px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: rgba(4, 7, 16, 0.90);
+  border: 1px solid rgba(155, 195, 255, 0.18);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 30;
+  overflow: hidden;
+}
+
+.menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(160, 200, 255, 0.12);
+}
+
+.menu-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.menu-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.menu-tab:hover {
+  color: #ffffff;
+  background: rgba(150, 200, 255, 0.1);
+}
+
+.menu-tab.active {
+  color: #ffffff;
+  background: rgba(120, 185, 255, 0.18);
+  border-color: rgba(155, 210, 255, 0.32);
+}
+
+.menu-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sandbox-row {
+  display: flex;
+  gap: 6px;
+}
+
+.sandbox-row input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(165, 200, 255, 0.18);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #f4f8ff;
+  font-size: 12px;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.sandbox-row input:focus {
+  border-color: rgba(145, 205, 255, 0.5);
+}
+
+.pin-bar {
+  padding: 2px 2px;
+}
+
+/* Visual SVG Constellation Cards Grid */
+.atlas-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+  max-height: calc(100vh - 250px);
+}
+
+.atlas-grid::-webkit-scrollbar,
+.settings-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.atlas-grid::-webkit-scrollbar-thumb,
+.settings-scroll::-webkit-scrollbar-thumb {
+  background: rgba(155, 195, 255, 0.22);
+  border-radius: 999px;
+}
+
+.atlas-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 6px 7px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.028);
+  border: 1px solid rgba(160, 200, 255, 0.10);
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.atlas-card:hover {
+  background: rgba(115, 175, 255, 0.12);
+  border-color: rgba(160, 215, 255, 0.36);
+  transform: translateY(-1px);
+}
+
+.atlas-card.active {
+  background: rgba(115, 180, 255, 0.18);
+  border-color: rgba(175, 222, 255, 0.62);
+  box-shadow: 0 0 18px rgba(110, 175, 255, 0.24);
+}
+
+.atlas-svg {
+  width: 78px;
+  height: 54px;
+  overflow: visible;
+}
+
+.atlas-card-name {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: capitalize;
+  color: rgba(226, 238, 255, 0.88);
+}
+
+.atlas-card-sub {
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Settings Panel */
+.settings-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding-right: 4px;
+  max-height: calc(100vh - 190px);
+}
+
+.setting-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.setting-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+  color: rgba(225, 236, 255, 0.88);
+}
+
+.setting-val {
+  font-size: 11px;
+  color: #a6d1ff;
+  font-variant-numeric: tabular-nums;
+}
+
+.setting-block input[type="range"] {
+  width: 100%;
+  accent-color: #8ec5ff;
+  cursor: pointer;
+  height: 4px;
+}
+
+.seg-group {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(160, 200, 255, 0.12);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.seg-btn {
+  flex: 1;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 5px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.seg-btn:hover {
+  color: #ffffff;
+  background: rgba(145, 195, 255, 0.1);
+}
+
+.seg-btn.active {
+  color: #ffffff;
+  background: rgba(120, 185, 255, 0.22);
+  border-color: rgba(160, 212, 255, 0.36);
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+
+.palette-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(160, 200, 255, 0.11);
+  color: rgba(220, 232, 252, 0.82);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.palette-chip:hover {
+  border-color: rgba(165, 210, 255, 0.36);
+}
+
+.palette-chip.active {
+  background: rgba(120, 185, 255, 0.18);
+  border-color: rgba(170, 218, 255, 0.55);
+  color: #ffffff;
+}
+
+.palette-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.offset-row {
+  display: flex;
+  gap: 4px;
+}
+
+.offset-row .hud-btn {
+  flex: 1;
+  padding: 4px 4px;
+  font-size: 10.5px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(160, 200, 255, 0.12);
+}
+
+.offset-live-clock {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.tap-sync-box {
+  margin-top: 4px;
+  border: 1px solid rgba(160, 200, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px;
+}
+
+.tap-sync-hint {
+  font-size: 10px;
+  color: #9dcaff;
+  margin-bottom: 5px;
+}
+
+.sync-lines-list {
+  max-height: 132px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sync-lines-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sync-lines-list::-webkit-scrollbar-thumb {
+  background: rgba(155, 195, 255, 0.22);
+  border-radius: 999px;
+}
+
+.sync-line-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(215, 228, 250, 0.72);
+  font-size: 10.5px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.sync-line-btn:hover {
+  background: rgba(125, 185, 255, 0.15);
+  color: #ffffff;
+}
+
+.sync-line-btn.active {
+  background: rgba(120, 185, 255, 0.22);
+  border-color: rgba(160, 212, 255, 0.35);
+  color: #ffffff;
+}
+
+.sync-line-ts {
+  font-size: 9.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.sync-line-txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: rgba(215, 228, 250, 0.85);
+  cursor: pointer;
+}
+
+.compact-toggle {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.toggle-row input[type="checkbox"] {
+  accent-color: #8ec5ff;
+  cursor: pointer;
+}
+
+.menu-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 12px;
+  font-size: 10px;
+  color: var(--text-dim);
+  border-top: 1px solid rgba(160, 200, 255, 0.11);
+  background: rgba(2, 4, 10, 0.5);
+}
+
+/* =========================================================================
+   Bottom Ethereal Star-Atlas Tag & Optional Line Subtitle
+   ========================================================================= */
+.lyric-stage {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  width: min(860px, 90vw);
+  text-align: center;
+  pointer-events: none;
+  z-index: 10;
+  transition: opacity 0.45s ease;
+}
+
+.constellation-tag {
+  font-size: 10px;
+  letter-spacing: 0.36em;
+  text-transform: uppercase;
+  color: rgba(182, 212, 252, 0.54);
+  text-shadow: 0 0 12px rgba(120, 180, 255, 0.35);
+  margin-bottom: 5px;
+  transition: opacity 0.4s ease;
+}
+
+.constellation-fact {
+  max-width: min(640px, 84vw);
+  margin: 0 auto 8px;
+  font-size: 11.5px;
+  font-weight: 300;
+  letter-spacing: 0.02em;
+  line-height: 1.42;
+  color: rgba(196, 218, 248, 0.66);
+  text-shadow: 0 1px 14px rgba(1, 3, 10, 0.98);
+  transition: opacity 0.35s ease;
+}
+
+.lyric-current {
+  font-family: var(--lyric-font);
+  font-style: var(--lyric-style);
+  font-size: calc(clamp(18px, 2.2vw, 26px) * var(--lyric-scale));
+  font-weight: var(--lyric-weight);
+  letter-spacing: var(--lyric-tracking);
+  text-transform: var(--lyric-transform);
+  line-height: 1.38;
+  min-height: 1.4em;
+  color: rgba(215, 228, 250, 0.38);
+  text-shadow: 0 2px 24px rgba(1, 3, 10, 0.95);
+}
+
+.lyric-word {
+  display: inline-block;
+  margin: 0 0.15em;
+  transition: color 0.26s ease, text-shadow 0.26s ease, transform 0.28s ease;
+}
+
+.lyric-word.past {
+  color: rgba(224, 236, 255, 0.68);
+}
+
+.lyric-word.active {
+  color: #ffffff;
+  transform: translateY(-2px) scale(1.035);
+  text-shadow:
+    0 0 14px rgba(205, 232, 255, 0.95),
+    0 0 30px rgba(130, 195, 255, 0.62);
+}
+
+.lyric-next {
+  margin-top: 6px;
+  font-family: var(--lyric-font);
+  font-style: var(--lyric-style);
+  font-size: clamp(12px, 1.15vw, 14px);
+  font-weight: var(--lyric-weight);
+  letter-spacing: var(--lyric-tracking);
+  text-transform: var(--lyric-transform);
+  color: rgba(180, 200, 235, 0.30);
+  min-height: 1.2em;
+  text-shadow: 0 1px 14px rgba(1, 3, 10, 0.9);
+}
+
+/* Drop Overlay */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 4, 12, 0.78);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.drop-card {
+  padding: 36px 52px;
+  border-radius: 20px;
+  border: 1px dashed rgba(150, 205, 255, 0.45);
+  background: rgba(8, 13, 28, 0.76);
+  text-align: center;
+}
+
+.drop-star {
+  font-size: 30px;
+  color: #b8dcff;
+  margin-bottom: 10px;
+}
+
+.drop-title {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.drop-sub {
+  margin-top: 6px;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--text-dim);
+}
+
+/* Live Fly-To / Lock-On Tracking Pill */
+.tracking-pill {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px 14px;
+  border-radius: 999px;
+  background: rgba(6, 11, 24, 0.78);
+  border: 1px solid rgba(155, 208, 255, 0.34);
+  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.55), 0 0 18px rgba(105, 175, 255, 0.16);
+  font-size: 11.5px;
+  color: #eef6ff;
+  pointer-events: auto;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.tracking-label {
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.tracking-release {
+  appearance: none;
+  border: 1px solid rgba(175, 215, 255, 0.28);
+  background: rgba(120, 180, 255, 0.14);
+  color: #cfe6ff;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.tracking-release:hover {
+  background: rgba(255, 110, 125, 0.25);
+  border-color: rgba(255, 145, 160, 0.5);
+  color: #ffffff;
+}
+
+/* Tiny Minimized Music Player Restore Pill (auto-hides cleanly with HUD!) */
+.player-restore-pill {
+  position: fixed;
+  top: 62px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 19;
+  appearance: none;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: rgba(215, 232, 255, 0.82);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: opacity 0.35s ease, transform 0.25s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.player-restore-pill:hover {
+  background: rgba(120, 185, 255, 0.20);
+  border-color: rgba(165, 215, 255, 0.44);
+  color: #ffffff;
+}
+
+body.hud-idle .player-restore-pill {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Live Sky Objects Fly-To Navigator */
+.live-objects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding-right: 4px;
+  max-height: calc(100vh - 235px);
+}
+
+.live-objects-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.live-objects-list::-webkit-scrollbar-thumb {
+  background: rgba(150, 195, 255, 0.22);
+  border-radius: 999px;
+}
+
+.sky-obj-group-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9dc8ff;
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.sky-obj-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sky-obj-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(160, 200, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(232, 242, 255, 0.92);
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.sky-obj-item:hover {
+  background: rgba(120, 180, 255, 0.14);
+  border-color: rgba(170, 215, 255, 0.38);
+  transform: translateY(-1px);
+}
+
+.sky-obj-item.active {
+  background: rgba(120, 185, 255, 0.22);
+  border-color: rgba(175, 224, 255, 0.62);
+  box-shadow: 0 0 14px rgba(105, 175, 255, 0.22);
+}
+
+.sky-obj-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sky-obj-name {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #f2f7ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sky-obj-sub {
+  font-size: 9.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sky-obj-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(120, 185, 255, 0.14);
+  border: 1px solid rgba(155, 210, 255, 0.28);
+  color: #b7dcff;
+}
+
+.sky-obj-badge.live {
+  background: rgba(95, 220, 170, 0.14);
+  border-color: rgba(120, 235, 185, 0.36);
+  color: #a9f5d2;
+}
+
+/* Lyric Font Picker Grid */
+.font-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+
+.font-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(160, 200, 255, 0.11);
+  color: rgba(226, 236, 252, 0.86);
+  cursor: pointer;
+  transition: all 0.16s ease;
+  text-align: left;
+}
+
+.font-chip:hover {
+  border-color: rgba(165, 210, 255, 0.36);
+  background: rgba(120, 180, 255, 0.10);
+}
+
+.font-chip.active {
+  background: rgba(120, 185, 255, 0.20);
+  border-color: rgba(175, 220, 255, 0.58);
+  color: #ffffff;
+}
+
+.font-chip-sample {
+  font-size: 13px;
+  line-height: 1.25;
+  color: #f4f8ff;
+}
+
+.font-chip-label {
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.settings-credit {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(120, 175, 255, 0.08), rgba(185, 145, 255, 0.06));
+  border: 1px solid rgba(170, 210, 255, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(215, 232, 255, 0.78);
+}
+
+.settings-credit .credit-star {
+  color: #a8d4ff;
+  text-shadow: 0 0 8px rgba(150, 205, 255, 0.75);
+}
+
+.settings-credit strong {
+  color: #f4f9ff;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+.astro-select {
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: rgba(14, 22, 46, 0.86);
+  border: 1px solid rgba(165, 210, 255, 0.24);
+  color: #eef5ff;
+  font-family: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.astro-select:hover,
+.astro-select:focus {
+  border-color: rgba(180, 222, 255, 0.58);
+  background: rgba(20, 32, 64, 0.94);
+}
+
+.astro-select option {
+  background: #0b1228;
+  color: #eef5ff;
+}

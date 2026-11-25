@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Astralis — Lyric Constellation Visualizer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="sky-canvas"></canvas>
+
+  <!-- Astronomical hover reticle & star/planet/satellite tooltip -->
+  <div id="hover-ring" class="hover-ring hidden" aria-hidden="true"></div>
+  <div id="sky-tooltip" class="sky-tooltip hidden" aria-hidden="true">
+    <div class="tip-head">
+      <span id="tip-name" class="tip-name">Betelgeuse</span>
+      <span id="tip-desig" class="tip-desig">α Ori</span>
+    </div>
+    <div id="tip-const" class="tip-const">ORION · THE HUNTER</div>
+    <div id="tip-sub" class="tip-sub">M Red Supergiant · Mag +0.45</div>
+    <div id="tip-fact" class="tip-fact hidden"></div>
+  </div>
+
+  <!-- Live Fly-To / Lock-On Tracking Pill (shown while tracking a planet, satellite, or nebula) -->
+  <div id="tracking-pill" class="tracking-pill hidden">
+    <span id="tracking-label" class="tracking-label">🛰 Tracking ISS (Zarya)</span>
+    <button id="btn-tracking-release" class="tracking-release" title="Release Lock-On (or drag sky)">Release ×</button>
+  </div>
+
+  <!-- Pooled 3D Astronomical Constellation & Star Name Labels Layers -->
+  <div id="sky-labels-layer" class="sky-labels-layer" aria-hidden="true"></div>
+  <div id="star-labels-layer" class="star-labels-layer" aria-hidden="true"></div>
+
+  <!-- Star-adjacent glowing floating word layer (tracks exact active star positions) -->
+  <div id="star-lyric-layer" class="star-lyric-layer" aria-hidden="true"></div>
+
+  <!-- Subtle drag-and-drop overlay for local audio / .lrc files -->
+  <div id="drop-overlay" class="drop-overlay hidden">
+    <div class="drop-card">
+      <div class="drop-star">✦</div>
+      <div class="drop-title">Drop Audio or Synced Lyrics</div>
+      <div class="drop-sub">MP3 · WAV · FLAC · OGG · LRC</div>
+    </div>
+  </div>
+
+  <!-- Auto-hiding minimal top HUD bar (draggable for borderless window) -->
+  <header id="hud-top" class="hud-top">
+    <div class="hud-left pywebview-drag-region">
+      <span class="brand-star">✦</span>
+      <span class="brand-name">ASTRALIS</span>
+      <span class="divider"></span>
+      <span id="source-badge" class="source-badge">VIEWING</span>
+      <div class="track-meta">
+        <span id="track-title" class="track-title">Live Celestial Observatory</span>
+        <span id="track-artist" class="track-artist">88 IAU Constellations · Real-Time Sky</span>
+      </div>
+      <span id="hud-clock" class="hud-clock">LIVE</span>
+      <span id="lyrics-pill" class="lyrics-pill">PATTERN</span>
+    </div>
+
+    <div class="hud-controls">
+      <!-- Visual Mode Switcher: Morph vs Rotating Hemisphere Dome -->
+      <div class="pill-group" title="Visual Mode (V)">
+        <button class="hud-btn active" data-vismode="morph" title="Morph Mode: stars flow between constellations (V)">✦ Morph</button>
+        <button class="hud-btn" data-vismode="hemisphere" title="Hemisphere Mode: 3D interactive celestial observatory of all 88 IAU constellations (V)">◐ Dome</button>
+      </div>
+
+      <!-- Window Mode Switcher -->
+      <div class="pill-group" title="Window Mode">
+        <button class="hud-btn active" data-winmode="borderless" title="Borderless Window (W)">Win</button>
+        <button class="hud-btn" data-winmode="background" title="Always on Background Behind Apps (B)">Bg</button>
+        <button class="hud-btn" data-winmode="wallpaper" title="Live Desktop Wallpaper Behind Icons (P)">Wall</button>
+        <button class="hud-btn" data-winmode="fullscreen" title="Fullscreen (F)">Full</button>
+      </div>
+
+      <!-- Quick Menu & Utility Buttons -->
+      <button id="btn-menu-constellations" class="hud-btn" title="All 88 IAU Constellations (M / A)">✦ 88 Sky</button>
+      <button id="btn-menu-objects" class="hud-btn" title="Fly-To Live Sun, Moon, Planets, Satellites & Nebulae (G)">🪐 Live</button>
+      <button id="btn-menu-settings" class="hud-btn" title="Settings Menu (S)">⚙ Settings</button>
+      <button id="btn-view" class="hud-btn" title="Viewing Mode: explore real sky patterns without lyrics (D)">🔭 View</button>
+      <button id="btn-open" class="hud-btn" title="Open Local Audio or .LRC File (O)">Open</button>
+
+      <button id="btn-tray" class="hud-btn icon-btn" title="Minimize to System Tray">—</button>
+      <button id="btn-close" class="hud-btn icon-btn danger" title="Quit Astralis">×</button>
+    </div>
+  </header>
+
+  <!-- Auto-hiding celestial music controls bar (works for Browser/Spotify/LiMusic & Local audio!) -->
+  <div id="local-bar" class="local-bar hidden">
+    <button id="btn-prev" class="hud-btn compact media-btn" title="Previous Track">⏮</button>
+    <button id="btn-playpause" class="hud-btn compact media-btn play-btn" title="Play / Pause (Space)">⏸</button>
+    <button id="btn-next" class="hud-btn compact media-btn" title="Next Track">⏭</button>
+    <span class="mini-div"></span>
+    <span id="time-label" class="time-label">0:00</span>
+    <input id="seek-slider" type="range" min="0" max="1000" value="0" title="Seek Track (← / →)" />
+    <span id="dur-label" class="time-label">0:00</span>
+    <span class="mini-div"></span>
+    <button id="btn-bar-sync-minus" class="hud-btn compact" title="Delay Lyrics −0.25s ([)">−.25</button>
+    <button id="btn-bar-sync-plus" class="hud-btn compact" title="Advance Lyrics +0.25s (])">+.25</button>
+    <button id="btn-back-live" class="hud-btn compact hidden" title="Return to Auto-Detect System Music">Live Music</button>
+    <span class="mini-div"></span>
+    <button id="btn-player-min" class="hud-btn compact" title="Minimize Music Bar">▴</button>
+  </div>
+  <button id="btn-player-restore" class="player-restore-pill hidden" title="Show Music Controls">♪ Player ▾</button>
+
+  <!-- Rich Visual Constellations, Live Sky Navigator & Settings Side Menu -->
+  <aside id="main-menu" class="main-menu hidden">
+    <div class="menu-header">
+      <div class="menu-tabs">
+        <button id="tab-constellations" class="menu-tab active">✦ 88 Sky</button>
+        <button id="tab-objects" class="menu-tab">🪐 Live Sky</button>
+        <button id="tab-settings" class="menu-tab">⚙ Settings</button>
+      </div>
+      <button id="btn-menu-close" class="hud-btn icon-btn" title="Close Menu (Esc)">×</button>
+    </div>
+
+    <!-- TAB 1: Constellations Visual Gallery -->
+    <section id="panel-constellations" class="menu-panel">
+      <div class="sandbox-row">
+        <input id="word-sandbox" type="text" placeholder="Type a word/lyric or filter constellations…" />
+        <button id="btn-sandbox-go" class="hud-btn active">Morph</button>
+      </div>
+
+      <div class="pin-bar">
+        <label class="toggle-row compact-toggle">
+          <input id="chk-lock-constellation" type="checkbox" />
+          <span>Lock selected constellation (only switch stars to music)</span>
+        </label>
+      </div>
+
+      <div id="atlas-grid" class="atlas-grid"></div>
+    </section>
+
+    <!-- TAB 2: Live Sky Objects & Instant Fly-To / Lock-On Tracking -->
+    <section id="panel-objects" class="menu-panel hidden">
+      <div class="sandbox-row">
+        <input id="object-search" type="text" placeholder="Search Sun, Saturn, ISS, Orion Nebula, M31…" />
+        <button id="btn-objects-reset" class="hud-btn" title="Reset Dome View">Reset</button>
+      </div>
+      <div id="live-objects-list" class="live-objects-list"></div>
+    </section>
+
+    <!-- TAB 3: Settings -->
+    <section id="panel-settings" class="menu-panel hidden">
+      <div class="settings-scroll">
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Visual Mode (Shortcut: V)</span>
+          </div>
+          <div class="seg-group" id="seg-vis-mode">
+            <button class="seg-btn active" data-vismode="morph">✦ Morph</button>
+            <button class="seg-btn" data-vismode="hemisphere">◐ Hemisphere Dome</button>
+          </div>
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Ambience Glow (Darkness)</span>
+            <span id="val-ambience" class="setting-val">45%</span>
+          </div>
+          <input id="rng-ambience" type="range" min="0" max="120" value="45" />
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Individual Star Music Glow</span>
+            <span id="val-starglow" class="setting-val">115%</span>
+          </div>
+          <input id="rng-starglow" type="range" min="0" max="180" value="115" />
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Transition Speed</span>
+            <span id="val-speed" class="setting-val">1.0×</span>
+          </div>
+          <input id="rng-speed" type="range" min="50" max="250" value="100" />
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Lyric Font Size</span>
+            <span id="val-fontsize" class="setting-val">100%</span>
+          </div>
+          <input id="rng-fontsize" type="range" min="60" max="180" value="100" />
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Lyric Font Style</span>
+          </div>
+          <div class="font-grid" id="font-grid"></div>
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Lyric Display Style</span>
+          </div>
+          <div class="seg-group" id="seg-lyric-mode">
+            <button class="seg-btn active" data-lyricmode="star">Next to Star</button>
+            <button class="seg-btn" data-lyricmode="both">Star + Line</button>
+            <button class="seg-btn" data-lyricmode="bottom">Bottom Only</button>
+            <button class="seg-btn" data-lyricmode="off">Hidden</button>
+          </div>
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Constellation Switching</span>
+          </div>
+          <div class="seg-group" id="seg-switch-mode">
+            <button class="seg-btn active" data-switchmode="phrase" title="Individual stars glow across each line, then transition to the next constellation">Phrase</button>
+            <button class="seg-btn" data-switchmode="song" title="Rotate/switch constellation once per song while stars glow to every word">Per Song</button>
+            <button class="seg-btn" data-switchmode="keyword" title="Also switch mid-line on poetic keywords">Keyword</button>
+            <button class="seg-btn" data-switchmode="locked" title="Stay on your chosen constellation">Locked</button>
+          </div>
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Sky Palette</span>
+          </div>
+          <div class="palette-grid" id="palette-grid"></div>
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Performance Profile (Background CPU/GPU)</span>
+          </div>
+          <div class="seg-group" id="seg-perf">
+            <button class="seg-btn" data-perf="eco">Eco 30fps</button>
+            <button class="seg-btn active" data-perf="adaptive">Adaptive</button>
+            <button class="seg-btn" data-perf="ultra">Ultra 60fps</button>
+          </div>
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Lyrics Source</span>
+            <span class="setting-val">5 Providers</span>
+          </div>
+          <select id="sel-lyrics-provider" class="astro-select" title="Choose where Astralis fetches synced lyrics from">
+            <option value="auto">✦ Auto (Best Match · Boidu + LRCLIB + KuGou)</option>
+            <option value="hinglish">🇮🇳 Hinglish / Romanized (Apple hi-Latn + KuGou + LRCLIB)</option>
+            <option value="boidu">♪ Boidu Better Lyrics (Apple Music Word/TTML)</option>
+            <option value="lrclib">🌐 LRCLIB (Open Community Synced LRC)</option>
+            <option value="kugou">🌏 KuGou (Bollywood, Asian & Global LRC)</option>
+          </select>
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Fine Sync Trim (Auto-Detected Per App)</span>
+            <span id="val-lead" class="setting-val">0.00s</span>
+          </div>
+          <input id="rng-lead" type="range" min="-2000" max="2000" step="50" value="0" />
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-label-row">
+            <span>Lyrics Sync Offset (Saved Per Song)</span>
+            <span id="offset-label" class="setting-val">0.00s</span>
+          </div>
+          <input id="rng-offset" type="range" min="-30000" max="30000" step="250" value="0" />
+          <div class="offset-row">
+            <button id="btn-offset-m1000" class="hud-btn" title="Delay lyrics by 1s">−1s</button>
+            <button id="btn-offset-minus" class="hud-btn" title="Delay lyrics by 0.25s ([)">−0.25s</button>
+            <button id="btn-offset-reset" class="hud-btn">0</button>
+            <button id="btn-offset-plus" class="hud-btn" title="Advance lyrics by 0.25s (])">+0.25s</button>
+            <button id="btn-offset-p1000" class="hud-btn" title="Advance lyrics by 1s">+1s</button>
+          </div>
+          <div id="offset-live-clock" class="offset-live-clock">Track 0:00.0 → Lyrics 0:00.0</div>
+          <div class="tap-sync-box">
+            <div class="tap-sync-hint">Instant Sync: click the lyric line you hear right now ↓</div>
+            <div id="sync-lines-list" class="sync-lines-list"></div>
+          </div>
+        </div>
+
+        <div class="setting-block">
+          <label class="toggle-row">
+            <input id="chk-deep-sky" type="checkbox" checked />
+            <span>Show Nebulae, Galaxies & Star Clusters (M42, M31, M45…)</span>
+          </label>
+          <label class="toggle-row">
+            <input id="chk-planets-sats" type="checkbox" checked />
+            <span>Show Sun, Moon, Planets & Live Satellites</span>
+          </label>
+          <label class="toggle-row">
+            <input id="chk-ecliptic" type="checkbox" checked />
+            <span>Show Subtle Ecliptic Path (Planetary Plane)</span>
+          </label>
+          <label class="toggle-row">
+            <input id="chk-audio-reactive" type="checkbox" checked />
+            <span>System Audio Reactivity (WASAPI Loopback)</span>
+          </label>
+          <label class="toggle-row">
+            <input id="chk-sky-labels" type="checkbox" checked />
+            <span>Show Constellation Names on Sky</span>
+          </label>
+          <label class="toggle-row">
+            <input id="chk-star-labels" type="checkbox" checked />
+            <span>Show Bright Star Names on Sky</span>
+          </label>
+          <label class="toggle-row">
+            <input id="chk-const-facts" type="checkbox" checked />
+            <span>Show Constellation Fun Facts</span>
+          </label>
+          <label class="toggle-row">
+            <input id="chk-show-tag" type="checkbox" checked />
+            <span>Show Bottom Constellation Name Tag</span>
+          </label>
+        </div>
+
+        <div class="settings-credit">
+          <span class="credit-star">✦</span>
+          <span class="credit-label">Astralis · <strong>Gabrieala Mandal</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <div class="menu-footer">
+      <span id="perf-readout">60 FPS · AUTO</span>
+      <span>M=Menu · B=Bg · P=Wall · F=Full</span>
+    </div>
+  </aside>
+
+  <!-- Bottom Ethereal Star-Atlas Tag, Optional Fun Fact & Line Subtitle -->
+  <footer id="lyric-stage" class="lyric-stage">
+    <div id="constellation-tag" class="constellation-tag">✦ ORION · THE HUNTER</div>
+    <div id="constellation-fact" class="constellation-fact"></div>
+    <div id="lyric-current" class="lyric-current hidden"></div>
+    <div id="lyric-next" class="lyric-next hidden"></div>
+  </footer>
+
+  <!-- Hidden file input for opening local audio / .lrc -->
+  <input id="file-input" type="file" multiple accept="audio/*,.lrc,.txt" style="display:none" />
+  <audio id="local-audio" crossorigin="anonymous" style="display:none"></audio>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

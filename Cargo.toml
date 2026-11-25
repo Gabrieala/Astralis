@@ -1,0 +1,42 @@
+[package]
+name = "astralis"
+version = "1.0.0"
+edition = "2021"
+description = "Astralis — Real-Time Celestial Observatory & Lyric Constellation Music Visualizer"
+
+[[bin]]
+name = "Astralis"
+path = "src/main.rs"
+
+[dependencies]
+tao = "0.30"
+wry = "0.47"
+tray-icon = "0.19"
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+regex = "1"
+rustfft = "6"
+include_dir = "0.7"
+urlencoding = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+windows = { version = "0.58", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Media_Control",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
