@@ -1335,3 +1335,19 @@ body.hud-idle .player-restore-pill {
   background: #0b1228;
   color: #eef5ff;
 }
+
+.web-only-btn {
+  display: none;
+  text-decoration: none;
+}
+
+body.web-preview .web-only-btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+body.web-preview .win-mode-group,
+body.web-preview #btn-tray,
+body.web-preview #btn-close {
+  display: none;
+}

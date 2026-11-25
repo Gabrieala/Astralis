@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>✦ Astralis — Real-Time Celestial Observatory &amp; Music Visualizer</title>
+  <meta name="description" content="Astralis transforms whatever music you're listening to into a living sky of all 88 official IAU constellations, real-time planets, live satellites, beat-reactive starlight, and multilingual synced lyrics." />
+  <style>
+    :root {
+      --bg: #02040d;
+      --bg-card: rgba(10, 16, 36, 0.68);
+      --border: rgba(165, 205, 255, 0.16);
+      --border-strong: rgba(175, 218, 255, 0.36);
+      --text: #eef5ff;
+      --text-muted: rgba(205, 224, 250, 0.72);
+      --accent: #95ccff;
+      --gold: #ffd485;
+      --rose: #ff9ec7;
+      --teal: #79f2de;
+      --violet: #b99cff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      min-height: 100vh;
+      overflow-x: hidden;
+      background:
+        radial-gradient(ellipse 80% 55% at 50% 0%, rgba(36, 68, 138, 0.24), transparent 65%),
+        radial-gradient(ellipse 60% 45% at 85% 30%, rgba(120, 62, 165, 0.14), transparent 60%),
+        radial-gradient(ellipse 55% 45% at 15% 70%, rgba(30, 120, 135, 0.12), transparent 60%),
+        var(--bg);
+      line-height: 1.6;
+    }
+
+    #starfield {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 24px 72px;
+    }
+
+    /* Top Nav */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 22px 0;
+      gap: 16px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text);
+      font-weight: 500;
+      letter-spacing: 0.22em;
+      font-size: 14px;
+    }
+
+    .brand-star {
+      color: #b7dcff;
+      font-size: 18px;
+      text-shadow: 0 0 14px rgba(150, 210, 255, 0.85);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 13.5px;
+      transition: color 0.18s ease;
+    }
+
+    .nav-links a:hover { color: #ffffff; }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 76px 0 64px;
+    }
+
+    .pill-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(135, 190, 255, 0.10);
+      border: 1px solid rgba(165, 212, 255, 0.24);
+      color: #cfe6ff;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 22px;
+      backdrop-filter: blur(8px);
+    }
+
+    h1 {
+      font-size: clamp(40px, 7vw, 68px);
+      font-weight: 300;
+      letter-spacing: 0.04em;
+      line-height: 1.08;
+      margin-bottom: 20px;
+      background: linear-gradient(135deg, #ffffff 15%, #c5e2ff 60%, #e7d4ff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-sub {
+      max-width: 650px;
+      margin: 0 auto 34px;
+      font-size: clamp(15.5px, 2vw, 18.5px);
+      color: var(--text-muted);
+      font-weight: 300;
+    }
+
+    .cta-row {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      padding: 13px 24px;
+      border-radius: 11px;
+      font-size: 14.5px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform 0.16s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+    }
+
+    .btn:hover { transform: translateY(-2px); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #74b8ff, #9b8cff);
+      color: #040814;
+      box-shadow: 0 8px 28px rgba(118, 178, 255, 0.34);
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 12px 34px rgba(130, 190, 255, 0.50);
+    }
+
+    .btn-preview {
+      background: rgba(120, 225, 210, 0.13);
+      color: #d7fff8;
+      border: 1px solid rgba(125, 240, 220, 0.38);
+      backdrop-filter: blur(8px);
+    }
+
+    .btn-preview:hover {
+      background: rgba(120, 225, 210, 0.22);
+      border-color: rgba(155, 250, 235, 0.65);
+    }
+
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.09);
+      border-color: var(--border-strong);
+    }
+
+    .hero-meta {
+      font-size: 12.5px;
+      color: rgba(190, 212, 245, 0.62);
+    }
+
+    /* Glass Cards */
+    .section {
+      margin-top: 64px;
+    }
+
+    .section-title {
+      font-size: 24px;
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+
+    .section-desc {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14.5px;
+      max-width: 600px;
+      margin: 0 auto 30px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      padding: 22px 22px 20px;
+      border-radius: 15px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .card:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-2px);
+    }
+
+    .card-icon {
+      font-size: 20px;
+      margin-bottom: 10px;
+      display: inline-block;
+    }
+
+    .card h3 {
+      font-size: 16px;
+      font-weight: 500;
+      margin-bottom: 7px;
+      color: #f7fbff;
+    }
+
+    .card p {
+      font-size: 13.5px;
+      color: var(--text-muted);
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .chip {
+      font-size: 11px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(150, 195, 255, 0.09);
+      border: 1px solid rgba(160, 205, 255, 0.18);
+      color: #d3e7ff;
+    }
+
+    /* Comparison / Preview Box */
+    .split-box {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+    }
+
+    .list {
+      list-style: none;
+      margin-top: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .list li {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      padding-left: 20px;
+      position: relative;
+    }
+
+    .list li::before {
+      content: "✦";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-size: 11px;
+      top: 2px;
+    }
+
+    /* Shortcuts Table */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 15px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+    }
+
+    th, td {
+      padding: 12px 18px;
+      text-align: left;
+      border-bottom: 1px solid rgba(160, 200, 255, 0.08);
+    }
+
+    th {
+      font-weight: 500;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #b7d7ff;
+      background: rgba(135, 185, 255, 0.06);
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    kbd {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(180, 215, 255, 0.24);
+      color: #ffffff;
+    }
+
+    /* SmartScreen Notice */
+    .tip-box {
+      margin-top: 24px;
+      padding: 16px 20px;
+      border-radius: 13px;
+      background: rgba(255, 206, 118, 0.07);
+      border: 1px solid rgba(255, 212, 130, 0.24);
+      font-size: 13.5px;
+      color: rgba(255, 238, 205, 0.88);
+    }
+
+    .tip-box strong { color: #ffe5ad; }
+
+    footer {
+      margin-top: 72px;
+      padding-top: 26px;
+      border-top: 1px solid rgba(160, 200, 255, 0.12);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      color: rgba(190, 212, 245, 0.65);
+    }
+
+    footer a {
+      color: #b8dcff;
+      text-decoration: none;
+    }
+
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <canvas id="starfield" aria-hidden="true"></canvas>
+
+  <div class="page">
+    <nav>
+      <a class="brand" href="#">
+        <span class="brand-star">✦</span>
+        <span>ASTRALIS</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#preview">Web vs Desktop</a>
+        <a href="#shortcuts">Shortcuts</a>
+        <a href="./preview/index.html">Live Preview</a>
+        <a href="https://github.com/Gabrieala/Astralis" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <div class="pill-badge">
+        <span>✦</span>
+        <span id="version-badge">Windows 10 / 11 · Native Rust · v1.0.0</span>
+      </div>
+      <h1>See Your Music Written<br />Across the Night Sky</h1>
+      <p class="hero-sub">
+        Astralis transforms whatever song you're playing into a living sky of all
+        <strong>88 official IAU constellations</strong>, real-time planets, live NORAD satellites,
+        beat-reactive starlight, and synced lyrics across languages.
+      </p>
+      <div class="cta-row">
+        <a id="btn-download-zip" class="btn btn-primary" href="https://github.com/Gabrieala/Astralis/releases/latest">
+          <span>⬇</span>
+          <span id="download-label">Download for Windows (v1.0.0)</span>
+        </a>
+        <a class="btn btn-preview" href="./preview/index.html">
+          <span>◐</span>
+          <span>Try Live in Browser</span>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/Gabrieala/Astralis" target="_blank" rel="noopener">
+          <span>View Source on GitHub</span>
+        </a>
+      </div>
+      <p class="hero-meta" id="release-meta">
+        Standalone ~5.3 MB Windows executable · Zero runtime dependencies · MIT Open Source
+      </p>
+    </header>
+
+    <section id="features" class="section">
+      <h2 class="section-title">Built for Music Lovers &amp; Stargazers</h2>
+      <p class="section-desc">
+        Every star, constellation line, planet, and nebula in Astralis is mapped from real astronomical catalogs — reacting in real time to your music.
+      </p>
+
+      <div class="grid-3">
+        <article class="card">
+          <span class="card-icon" style="color:var(--accent)">✦</span>
+          <h3>Morph &amp; 3D Hemisphere Dome</h3>
+          <p>
+            Switch seamlessly with <kbd>V</kbd> between curved star-morphing center-stage constellations and a full 360° interactive 3D planetarium of all 88 IAU constellations + 1,350 real Hipparcos stars.
+          </p>
+          <div class="chips">
+            <span class="chip">88 IAU Constellations</span>
+            <span class="chip">Free Drag &amp; Zoom</span>
+            <span class="chip">3D Dotted Routes</span>
+          </div>
+        </article>
+
+        <article class="card">
+          <span class="card-icon" style="color:var(--gold)">♪</span>
+          <h3>5-Provider Synced Lyrics &amp; Hinglish</h3>
+          <p>
+            Auto-syncs with Spotify, YouTube, Brave, Chrome, Edge, LiMusic, VLC, and more. Pick your favorite source anytime from Settings — including studio-timed Hinglish &amp; Romanized lyrics.
+          </p>
+          <div class="chips">
+            <span class="chip">Auto Best</span>
+            <span class="chip">Hinglish / Romanized</span>
+            <span class="chip">Boidu TTML</span>
+            <span class="chip">LRCLIB</span>
+            <span class="chip">KuGou</span>
+          </div>
+        </article>
+
+        <article class="card">
+          <span class="card-icon" style="color:var(--rose)">◈</span>
+          <h3>45 Hz Beat-Locked Starlight</h3>
+          <p>
+            Dual-band kick and snare onset detection keeps calm acoustic songs serene while energetic beats make round stars swell and constellation lines pulse cleanly on every drum hit — even during intros and guitar solos.
+          </p>
+          <div class="chips">
+            <span class="chip">WASAPI Loopback</span>
+            <span class="chip">Calm vs Rock Dynamics</span>
+            <span class="chip">Pause-Synced Sky</span>
+          </div>
+        </article>
+
+        <article class="card">
+          <span class="card-icon" style="color:var(--teal)">🪐</span>
+          <h3>Real-Time Solar System &amp; Satellites</h3>
+          <p>
+            Track the live J2000 positions of the Sun, phased Moon, 7 planets, 9 live CelesTrak NORAD spacecraft (ISS, Hubble, JWST, Tiangong…), and 21 real Messier/NGC nebulae and galaxies with hover fun facts.
+          </p>
+          <div class="chips">
+            <span class="chip">Live Fly-To &amp; Lock-On</span>
+            <span class="chip">Ecliptic Path</span>
+            <span class="chip">Star Fun Facts</span>
+          </div>
+        </article>
+
+        <article class="card">
+          <span class="card-icon" style="color:var(--violet)">▣</span>
+          <h3>Live Desktop Wallpaper &amp; Modes</h3>
+          <p>
+            Run Astralis as a frameless floating window, pinned behind all your open apps, or embedded straight behind your desktop icons as a live Windows 10/11 wallpaper with adaptive low-CPU power profiles.
+          </p>
+          <div class="chips">
+            <span class="chip">Borderless</span>
+            <span class="chip">Background Layer</span>
+            <span class="chip">Live Wallpaper</span>
+          </div>
+        </article>
+
+        <article class="card">
+          <span class="card-icon" style="color:#a9d5ff">⚡</span>
+          <h3>Pure Native Rust Binary</h3>
+          <p>
+            Compiled down to a single ~5.3 MB native Windows executable with all WebGL2 shaders and star catalogs embedded inside — no Python, Node.js, or bloated installers required.
+          </p>
+          <div class="chips">
+            <span class="chip">Single .exe</span>
+            <span class="chip">WebGL2</span>
+            <span class="chip">System Tray</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="preview" class="section">
+      <h2 class="section-title">Browser Preview vs. Windows Desktop App</h2>
+      <p class="section-desc">
+        Take Astralis for a spin right in your browser, then grab the native Windows app for automatic Spotify, YouTube, and Live Wallpaper integration.
+      </p>
+
+      <div class="split-box">
+        <div class="card">
+          <h3>◐ Live Browser Preview</h3>
+          <ul class="list">
+            <li>Explore all 88 IAU constellations in both Morph &amp; 3D Dome modes</li>
+            <li>Inspect real-time Sun, Moon, 7 planets, and 21 nebulae/galaxies</li>
+            <li>Drag and drop your own local <code>.mp3</code> / <code>.wav</code> + <code>.lrc</code> files with Web Audio beat sync</li>
+            <li>Customize palettes, 6 lyric fonts, star names &amp; constellation fun facts</li>
+          </ul>
+          <div style="margin-top:18px;">
+            <a class="btn btn-preview" href="./preview/index.html" style="padding:10px 18px;font-size:13.5px;">Launch Browser Preview →</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>✦ Full Windows Desktop App</h3>
+          <ul class="list">
+            <li>Auto-detects Spotify, YouTube, Brave, Chrome, Edge, LiMusic, VLC &amp; more (Windows SMTC)</li>
+            <li>Live 5-provider synced lyrics (Auto, Hinglish/Romanized, Boidu TTML, LRCLIB, KuGou)</li>
+            <li>45 Hz system-wide WASAPI loopback beat detection for any playing audio</li>
+            <li>Borderless, Background, Live Desktop Wallpaper &amp; System Tray modes</li>
+          </ul>
+          <div style="margin-top:18px;">
+            <a id="btn-download-exe" class="btn btn-primary" href="https://github.com/Gabrieala/Astralis/releases/latest" style="padding:10px 18px;font-size:13.5px;">Download Astralis.exe →</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="tip-box">
+        <strong>First-Launch Tip on Windows:</strong> Because Astralis is an independent open-source release without a commercial signing certificate yet, Windows SmartScreen may show <em>"Windows protected your PC"</em> on first run. Just click <strong>More info → Run anyway</strong>.
+      </div>
+    </section>
+
+    <section id="shortcuts" class="section">
+      <h2 class="section-title">Keyboard Shortcuts</h2>
+      <p class="section-desc">Control every view, layer, and playback setting effortlessly from your keyboard.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Shortcut</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><kbd>V</kbd></td><td>Toggle between <strong>Morph Mode</strong> and <strong>3D Hemisphere Dome Mode</strong></td></tr>
+            <tr><td><kbd>Space</kbd> / <kbd>←</kbd> <kbd>→</kbd></td><td>Play/Pause music (pauses the sky in lockstep) &amp; seek ±5 seconds</td></tr>
+            <tr><td><kbd>M</kbd> / <kbd>G</kbd> / <kbd>S</kbd></td><td>Open <strong>88 Sky Atlas</strong>, <strong>Live Sky Fly-To</strong>, or <strong>Settings</strong></td></tr>
+            <tr><td><kbd>D</kbd></td><td>Toggle <strong>Viewing Mode</strong> (clean live observatory without music)</td></tr>
+            <tr><td><kbd>R</kbd> / <kbd>+</kbd> <kbd>-</kbd></td><td>Reset Dome camera &amp; zoom in/out (or scroll &amp; drag freely)</td></tr>
+            <tr><td><kbd>W</kbd> / <kbd>B</kbd> / <kbd>P</kbd> / <kbd>F</kbd></td><td>Borderless Window / Background / Live Wallpaper / Fullscreen</td></tr>
+            <tr><td><kbd>L</kbd> / <kbd>O</kbd></td><td>Cycle lyric layout / Open local audio or <code>.lrc</code> file</td></tr>
+            <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Fine-tune per-song lyric offset (±500ms)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      <span>✦ <strong>Astralis</strong> · Crafted by <strong>Gabrieala Mandal</strong></span>
+      <span>
+        <a href="https://github.com/Gabrieala/Astralis" target="_blank" rel="noopener">GitHub</a> ·
+        <a href="https://github.com/Gabrieala/Astralis/releases" target="_blank" rel="noopener">Releases</a> ·
+        <a href="https://github.com/Gabrieala/Astralis/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </span>
+    </footer>
+  </div>
+
+  <script>
+    // Subtle interactive celestial starfield + constellation background
+    (() => {
+      const canvas = document.getElementById("starfield");
+      const ctx = canvas.getContext("2d");
+      let w = 0, h = 0, dpr = 1;
+      let mx = 0, my = 0, tx = 0, ty = 0;
+
+      const stars = [];
+      const HERO_PATTERNS = [
+        // Orion-inspired left cluster
+        {
+          cx: 0.14, cy: 0.26, color: "rgba(155, 205, 255, ",
+          pts: [[-58,-72],[44,-54],[-22,-4],[4,0],[28,4],[-48,74],[52,66]],
+          edges: [[0,2],[1,4],[2,3],[3,4],[2,5],[4,6],[0,1]]
+        },
+        // Cassiopeia-inspired right cluster
+        {
+          cx: 0.85, cy: 0.22, color: "rgba(255, 210, 145, ",
+          pts: [[-74,-18],[-36,24],[4,-8],[42,28],[78,-22]],
+          edges: [[0,1],[1,2],[2,3],[3,4]]
+        },
+        // Cygnus-inspired lower right cluster
+        {
+          cx: 0.82, cy: 0.72, color: "rgba(165, 240, 225, ",
+          pts: [[0,-68],[0,-8],[0,62],[-64,-6],[66,-10]],
+          edges: [[0,1],[1,2],[3,1],[1,4]]
+        },
+      ];
+
+      function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        w = window.innerWidth;
+        h = window.innerHeight;
+        canvas.width = Math.floor(w * dpr);
+        canvas.height = Math.floor(h * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (stars.length === 0) {
+          const count = Math.min(180, Math.max(90, Math.floor((w * h) / 9500)));
+          const hues = ["#cfe4ff", "#ffffff", "#ffe6ba", "#ffd0e3", "#b8f7eb"];
+          for (let i = 0; i < count; i++) {
+            stars.push({
+              x: Math.random(),
+              y: Math.random(),
+              r: 0.6 + Math.random() * 1.7,
+              a: 0.22 + Math.random() * 0.65,
+              sp: 0.8 + Math.random() * 2.2,
+              ph: Math.random() * Math.PI * 2,
+              col: hues[i % hues.length],
+              depth: 0.3 + Math.random() * 0.9,
+            });
+          }
+        }
+      }
+
+      window.addEventListener("resize", resize);
+      window.addEventListener("pointermove", (e) => {
+        tx = (e.clientX / Math.max(1, w) - 0.5) * 24;
+        ty = (e.clientY / Math.max(1, h) - 0.5) * 18;
+      });
+      resize();
+
+      let meteor = null;
+      let nextMeteorAt = performance.now() + 3500;
+
+      function tick(now) {
+        const t = now * 0.001;
+        mx += (tx - mx) * 0.05;
+        my += (ty - my) * 0.05;
+
+        ctx.clearRect(0, 0, w, h);
+
+        // Soft background stars
+        for (const s of stars) {
+          const px = s.x * w - mx * s.depth * 0.5;
+          const py = s.y * h - my * s.depth * 0.5;
+          const tw = 0.72 + 0.28 * Math.sin(t * s.sp + s.ph);
+          ctx.globalAlpha = s.a * tw;
+          ctx.fillStyle = s.col;
+          ctx.beginPath();
+          ctx.arc(px, py, s.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Delicate ambient constellation vignettes
+        const scale = Math.min(1.0, w / 1100);
+        for (const p of HERO_PATTERNS) {
+          const ox = p.cx * w - mx * 0.9;
+          const oy = p.cy * h - my * 0.9;
+          ctx.strokeStyle = p.color + "0.22)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (const [a, b] of p.edges) {
+            ctx.moveTo(ox + p.pts[a][0] * scale, oy + p.pts[a][1] * scale);
+            ctx.lineTo(ox + p.pts[b][0] * scale, oy + p.pts[b][1] * scale);
+          }
+          ctx.stroke();
+
+          for (let i = 0; i < p.pts.length; i++) {
+            const x = ox + p.pts[i][0] * scale;
+            const y = oy + p.pts[i][1] * scale;
+            const pulse = 0.82 + 0.26 * Math.sin(t * 2.1 + i * 1.3);
+            const g = ctx.createRadialGradient(x, y, 0, x, y, 9 * pulse);
+            g.addColorStop(0, "rgba(255,255,255,0.95)");
+            g.addColorStop(0.35, p.color + "0.45)");
+            g.addColorStop(1, p.color + "0)");
+            ctx.globalAlpha = 0.9;
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.arc(x, y, 9 * pulse, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        // Occasional shooting star
+        if (!meteor && now > nextMeteorAt) {
+          meteor = {
+            x: (0.15 + Math.random() * 0.7) * w,
+            y: (0.05 + Math.random() * 0.35) * h,
+            vx: 540 + Math.random() * 260,
+            vy: 220 + Math.random() * 140,
+            born: now,
+            life: 620,
+          };
+          nextMeteorAt = now + 5200 + Math.random() * 6500;
+        }
+        if (meteor) {
+          const p = (now - meteor.born) / meteor.life;
+          if (p >= 1) {
+            meteor = null;
+          } else {
+            const dt = (now - meteor.born) * 0.001;
+            const x = meteor.x + meteor.vx * dt;
+            const y = meteor.y + meteor.vy * dt;
+            const fade = Math.sin(p * Math.PI);
+            const grad = ctx.createLinearGradient(x, y, x - meteor.vx * 0.14, y - meteor.vy * 0.14);
+            grad.addColorStop(0, `rgba(255, 250, 240, ${fade * 0.85})`);
+            grad.addColorStop(1, "rgba(140, 200, 255, 0)");
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x - meteor.vx * 0.14, y - meteor.vy * 0.14);
+            ctx.stroke();
+          }
+        }
+
+        ctx.globalAlpha = 1;
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+
+    // Auto-populate the latest GitHub Release download links & version badge
+    (async () => {
+      try {
+        const res = await fetch("https://api.github.com/repos/Gabrieala/Astralis/releases/latest");
+        if (!res.ok) return;
+        const rel = await res.json();
+        const tag = rel.tag_name || "v1.0.0";
+        const assets = Array.isArray(rel.assets) ? rel.assets : [];
+        const zip = assets.find((a) => /\.zip$/i.test(a.name));
+        const exe = assets.find((a) => /\.exe$/i.test(a.name));
+
+        const badge = document.getElementById("version-badge");
+        if (badge) badge.textContent = `Windows 10 / 11 · Native Rust · ${tag}`;
+
+        const dlLabel = document.getElementById("download-label");
+        const dlZip = document.getElementById("btn-download-zip");
+        if (dlLabel) dlLabel.textContent = `Download for Windows (${tag})`;
+        if (dlZip && zip && zip.browser_download_url) dlZip.href = zip.browser_download_url;
+
+        const dlExe = document.getElementById("btn-download-exe");
+        if (dlExe && exe && exe.browser_download_url) dlExe.href = exe.browser_download_url;
+
+        const meta = document.getElementById("release-meta");
+        if (meta && zip && exe) {
+          const zipMb = (zip.size / (1024 * 1024)).toFixed(1);
+          const exeMb = (exe.size / (1024 * 1024)).toFixed(1);
+          meta.textContent = `${zipMb} MB zip (${exeMb} MB standalone .exe) · Zero dependencies · MIT Open Source`;
+        }
+      } catch {}
+    })();
+  </script>
+</body>
+</html>

@@ -271,7 +271,12 @@ const state = {
   isSeekingSlider: false,
 };
 
-const API_AVAILABLE = window.location.protocol === "http:" || window.location.protocol === "https:";
+const API_AVAILABLE =
+  (window.location.protocol === "http:" || window.location.protocol === "https:") &&
+  (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost");
+if (!API_AVAILABLE) {
+  document.body.classList.add("web-preview");
+}
 
 async function apiGet(path) {
   if (!API_AVAILABLE) return null;
