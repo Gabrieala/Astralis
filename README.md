@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # ✦ Astralis — Real-Time Celestial Observatory & Music Visualizer
 
 **Astralis** is a lightweight, standalone **native Rust** Windows desktop application (~5.2 MB single `.exe`) that turns whatever music you're listening to into a living celestial sky of **all 88 official IAU constellations**, real-time planets, live NORAD satellites, deep-sky nebulae, beat-reactive starlight, and synced lyrics across languages.
@@ -7,7 +6,7 @@ Crafted by **Gabrieala Mandal**.
 
 ---
 
-## ✨ Features
+##  Features
 
 - **Two Switchable Visual Modes (`V`)**
   - **✦ Morph Mode**: Features a vibrant constellation center-stage that flows smoothly along curved orbital star flights with beat-reactive round starlight and pulsing constellation lines.
@@ -25,7 +24,7 @@ Crafted by **Gabrieala Mandal**.
 
 ---
 
-## 🚀 Download & Run (Windows 10 / 11 64-bit)
+##  Download & Run (Windows 10 / 11 64-bit)
 
 1. Download **`Astralis-v1.0.0-win64.zip`** from the [Releases](../../releases) page and extract **`Astralis.exe`**.
 2. Double-click **`Astralis.exe`** — no Python, Node.js, or installer required.
@@ -41,7 +40,7 @@ Astralis.exe --debug        # Enable WebView2 DevTools
 
 ---
 
-## ⌨️ Keyboard Shortcuts
+##  Keyboard Shortcuts
 
 | Key | Action |
 |---|---|
@@ -61,7 +60,7 @@ Astralis.exe --debug        # Enable WebView2 DevTools
 
 ---
 
-## 🛠 Building From Source
+##  Building From Source
 
 Requires **Rust (MSVC toolchain)** on Windows 10/11 (Edge WebView2 runtime is pre-installed on Windows 11 and updated Windows 10):
 
@@ -81,10 +80,10 @@ cargo test
 
 ---
 
-## 📄 License
+##  License
 
 MIT License — see [LICENSE](LICENSE).
 =======
 # Astralis
 It is a music visualizer were you can see the music you are currently listening to on different constellations and has clean transitions between the constellations you can customize the settings to your liking and it works with both Brower and apps also supports multiple languages.
->>>>>>> a5ad43a0f32b94ea5838efc3d8c1e14d6a6ed55f
+
