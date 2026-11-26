@@ -1,6 +1,6 @@
-# ✦ Astralis — Real-Time Celestial Observatory & Music Visualizer
+# Astralis — Real-Time Celestial Observatory & Music Visualizer
 
-**Astralis** is a lightweight, standalone **native Rust** Windows desktop application (~5.2 MB single `.exe`) that turns whatever music you're listening to into a living celestial sky of **all 88 official IAU constellations**, real-time planets, live NORAD satellites, deep-sky nebulae, beat-reactive starlight, and synced lyrics across languages.
+**Astralis** is a lightweight, standalone **native Rust** Windows desktop application (~5.2 MB single `.exe`) that turns whatever music you're listening to into a living celestial sky of **all 88 official IAU constellations**, real-time planets, live NORAD satellites, deep-sky nebulae, beat-reactive starlight, and synced lyrics across languages.(It is a music visualizer were you can see the music you are currently listening to on different constellations and has clean transitions between the constellations you can customize the settings to your liking and it works with both Brower and apps also supports multiple languages.)
 
 Crafted by **Gabrieala Mandal**.
 
@@ -84,6 +84,5 @@ cargo test
 
 MIT License — see [LICENSE](LICENSE).
 =======
-# Astralis
-It is a music visualizer were you can see the music you are currently listening to on different constellations and has clean transitions between the constellations you can customize the settings to your liking and it works with both Brower and apps also supports multiple languages.
+
 
