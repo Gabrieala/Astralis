@@ -1351,3 +1351,19 @@ body.web-preview #btn-tray,
 body.web-preview #btn-close {
   display: none;
 }
+
+.hud-left {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hud-controls {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1020px) {
+  .hud-left .lyrics-pill,
+  .hud-left .hud-clock {
+    display: none;
+  }
+}

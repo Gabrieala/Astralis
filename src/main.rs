@@ -2,12 +2,14 @@
 
 mod audio_wasapi;
 mod celestial;
+mod desktop_input;
 mod lyrics;
 mod media_smtc;
 mod window_mgr;
 
 use audio_wasapi::AudioAnalyzer;
 use celestial::LiveCelestialFeed;
+use desktop_input::{DesktopInputFrame, DesktopInputWatcher};
 use include_dir::{include_dir, Dir};
 use lyrics::{parse_lrc, LyricsEngine};
 use media_smtc::MediaWatcher;
@@ -42,6 +44,7 @@ enum UserEvent {
     StartDrag,
     Quit,
     TrayMenu(MenuId),
+    DesktopInput(DesktopInputFrame),
 }
 
 struct WindowStatusCache {
@@ -97,62 +100,11 @@ fn resolve_dev_web_dir() -> Option<PathBuf> {
     None
 }
 
-/// Generate a crisp 32×32 RGBA celestial star crest for the Windows tray & window icon.
-fn build_star_icon_rgba(size: u32) -> (Vec<u8>, u32, u32) {
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
-    let c = (size as f32 - 1.0) * 0.5;
-    let max_r = size as f32 * 0.46;
+/// Embedded 64×64 RGBA Astralis emblem for the Windows taskbar, window, and system tray icons.
+static APP_ICON_64_RGBA: &[u8] = include_bytes!("../assets/astralis_64.rgba");
 
-    for y in 0..size {
-        for x in 0..size {
-            let dx = x as f32 - c;
-            let dy = y as f32 - c;
-            let r = (dx * dx + dy * dy).sqrt();
-            let idx = ((y * size + x) * 4) as usize;
-
-            if r > max_r + 1.0 {
-                rgba[idx + 3] = 0;
-                continue;
-            }
-
-            // Deep obsidian badge with sapphire border ring
-            let mut cr = 10.0f32;
-            let mut cg = 18.0f32;
-            let mut cb = 44.0f32;
-            let mut ca = 255.0f32;
-
-            if r > max_r - 1.6 {
-                let ring = (1.0 - (r - (max_r - 1.6)).abs() / 1.8).clamp(0.0, 1.0);
-                cr = 10.0 + ring * 115.0;
-                cg = 18.0 + ring * 172.0;
-                cb = 44.0 + ring * 211.0;
-                ca = ((max_r + 0.8 - r).clamp(0.0, 1.0)) * 255.0;
-            }
-
-            // 4-point celestial star silhouette in center
-            let ax = dx.abs() / max_r;
-            let ay = dy.abs() / max_r;
-            let star_metric = ax.powf(0.58) + ay.powf(0.58);
-            if star_metric < 0.84 {
-                let s = ((0.84 - star_metric) / 0.24).clamp(0.0, 1.0);
-                cr = cr * (1.0 - s) + 230.0 * s;
-                cg = cg * (1.0 - s) + 244.0 * s;
-                cb = cb * (1.0 - s) + 255.0 * s;
-            }
-
-            // Glowing white core
-            let core = (-((r / max_r) * 3.8).powi(2)).exp();
-            cr = (cr + core * 140.0).min(255.0);
-            cg = (cg + core * 140.0).min(255.0);
-            cb = (cb + core * 140.0).min(255.0);
-
-            rgba[idx] = cr as u8;
-            rgba[idx + 1] = cg as u8;
-            rgba[idx + 2] = cb as u8;
-            rgba[idx + 3] = ca as u8;
-        }
-    }
-    (rgba, size, size)
+fn build_app_icon_rgba() -> (Vec<u8>, u32, u32) {
+    (APP_ICON_64_RGBA.to_vec(), 64, 64)
 }
 
 fn content_type_for(path: &str) -> &'static str {
@@ -408,7 +360,7 @@ fn main() {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    let (win_rgba, win_w, win_h) = build_star_icon_rgba(32);
+    let (win_rgba, win_w, win_h) = build_app_icon_rgba();
     let tao_icon = tao::window::Icon::from_rgba(win_rgba.clone(), win_w, win_h).ok();
 
     let window = WindowBuilder::new()
@@ -457,16 +409,23 @@ fn main() {
     );
 
     let url = format!("http://127.0.0.1:{}/index.html", port);
-    let _webview = WebViewBuilder::new()
+    let webview = WebViewBuilder::new()
         .with_url(&url)
         .with_background_color((1, 2, 7, 255))
         .with_devtools(debug_mode)
         .build(&window)
         .expect("Failed to initialize Edge WebView2");
 
+    // Non-invasive interactive desktop wallpaper observer (active ONLY while in wallpaper mode!)
+    let desk_proxy = proxy.clone();
+    let desktop_input = DesktopInputWatcher::start(hwnd_raw, move |frame| {
+        let _ = desk_proxy.send_event(UserEvent::DesktopInput(frame));
+    });
+
     // Apply requested startup window mode (--background / --wallpaper / --fullscreen)
     if start_mode != "borderless" {
         let applied = win_ctrl.set_mode(start_mode);
+        desktop_input.set_active(applied == "wallpaper");
         if let Ok(mut s) = win_status.lock() {
             s.mode = applied;
         }
@@ -528,6 +487,7 @@ fn main() {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
+                desktop_input.stop();
                 win_ctrl.cleanup();
                 media_watcher.stop();
                 audio_analyzer.stop();
@@ -537,9 +497,25 @@ fn main() {
             Event::UserEvent(ev) => match ev {
                 UserEvent::SetMode(m) => {
                     let applied = win_ctrl.set_mode(&m);
+                    desktop_input.set_active(applied == "wallpaper");
                     if let Ok(mut s) = win_status.lock() {
                         s.mode = applied;
                     }
+                }
+                UserEvent::DesktopInput(f) => {
+                    let js = format!(
+                        "window.__astralisDesktopInput&&window.__astralisDesktopInput({:.4},{:.4},{:.2},{:.2},{:.3},{},{},{},{})",
+                        f.nx,
+                        f.ny,
+                        f.dx,
+                        f.dy,
+                        f.wheel,
+                        if f.dragging { 1 } else { 0 },
+                        if f.drag_ended { 1 } else { 0 },
+                        if f.clicked { 1 } else { 0 },
+                        if f.over_desktop { 1 } else { 0 }
+                    );
+                    let _ = webview.evaluate_script(&js);
                 }
                 UserEvent::SetClickThrough(en) => {
                     let applied = win_ctrl.set_click_through(en);
@@ -566,6 +542,7 @@ fn main() {
                     }
                 }
                 UserEvent::Quit => {
+                    desktop_input.stop();
                     win_ctrl.cleanup();
                     media_watcher.stop();
                     audio_analyzer.stop();
@@ -576,24 +553,28 @@ fn main() {
                     if id == id_borderless {
                         win_ctrl.show_window();
                         let applied = win_ctrl.set_mode("borderless");
+                        desktop_input.set_active(false);
                         if let Ok(mut s) = win_status.lock() {
                             s.mode = applied;
                         }
                     } else if id == id_bg {
                         win_ctrl.show_window();
                         let applied = win_ctrl.set_mode("background");
+                        desktop_input.set_active(false);
                         if let Ok(mut s) = win_status.lock() {
                             s.mode = applied;
                         }
                     } else if id == id_wall {
                         win_ctrl.show_window();
                         let applied = win_ctrl.set_mode("wallpaper");
+                        desktop_input.set_active(applied == "wallpaper");
                         if let Ok(mut s) = win_status.lock() {
                             s.mode = applied;
                         }
                     } else if id == id_full {
                         win_ctrl.show_window();
                         let applied = win_ctrl.set_mode("fullscreen");
+                        desktop_input.set_active(false);
                         if let Ok(mut s) = win_status.lock() {
                             s.mode = applied;
                         }
@@ -608,6 +589,7 @@ fn main() {
                     } else if id == id_hide {
                         win_ctrl.hide_window();
                     } else if id == id_quit {
+                        desktop_input.stop();
                         win_ctrl.cleanup();
                         media_watcher.stop();
                         audio_analyzer.stop();

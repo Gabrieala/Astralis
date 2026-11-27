@@ -268,6 +268,7 @@ const state = {
   instrumentalBeatCount: 0,
   instrumentalMorphTimer: 0,
   inInstrumentalBreak: false,
+  desktopInteractUntil: 0,
   isSeekingSlider: false,
 };
 
@@ -1445,9 +1446,14 @@ function getRenderBudget() {
     (state.sourceMode === "viewing" && (state.audio.active > 0.05 || Boolean(hemiPhysics.trackedTarget)));
 
   if (state.windowMode === "wallpaper") {
+    // Boost cleanly to 60 FPS while hovering/dragging/zooming the live desktop wallpaper
+    // (keep nebulaScale identical to idle wallpaper so zero WebGL framebuffer resize hitch occurs!).
+    if (performance.now() < state.desktopInteractUntil) {
+      return { fps: 60, maxDpr: 1.0, nebulaScale: 0.20, nebulaSkip: 4 };
+    }
     return isPlaying
       ? { fps: 24, maxDpr: 1.0, nebulaScale: 0.20, nebulaSkip: 4 }
-      : { fps: 10, maxDpr: 1.0, nebulaScale: 0.18, nebulaSkip: 6 };
+      : { fps: 10, maxDpr: 1.0, nebulaScale: 0.20, nebulaSkip: 6 };
   }
   const isBg = state.windowMode === "background" || !state.isFocused;
   if (isBg) {
@@ -1497,10 +1503,10 @@ function frameLoop(now) {
   lastFrameTime = now;
   lastRenderTime = now;
 
-  const profKey = `${budget.maxDpr}|${budget.nebulaScale}|${budget.nebulaSkip}`;
+  engine.nebulaUpdateInterval = budget.nebulaSkip;
+  const profKey = `${budget.maxDpr}|${budget.nebulaScale}`;
   if (profKey !== appliedProfileKey) {
     appliedProfileKey = profKey;
-    engine.nebulaUpdateInterval = budget.nebulaSkip;
     engine.resize(budget.maxDpr, budget.nebulaScale);
   }
 
@@ -2301,6 +2307,78 @@ function updateSkyHover() {
   const ty = hit.py - 18 < 68 ? hit.py + 18 : Math.min(vh - tipH, hit.py - 22);
   elSkyTooltip.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0)`;
 }
+
+// Native Windows Interactive Desktop Wallpaper bridge (called by Rust WH_MOUSE_LL observer!)
+window.__astralisDesktopInput = function (nx, ny, dx, dy, wheel, dragging, dragEnded, clicked, overDesktop) {
+  if (state.windowMode !== "wallpaper") return;
+  const vw = window.innerWidth || 1920;
+  const vh = window.innerHeight || 1080;
+  const dpr = window.devicePixelRatio || 1;
+
+  if (overDesktop || dragging || wheel !== 0 || clicked) {
+    state.desktopInteractUntil = performance.now() + 1800;
+  }
+
+  if (!overDesktop && !dragging) {
+    hoverInsideCanvas = false;
+    skyDragging = false;
+    hemiPhysics.isDragging = false;
+    hideSkyTooltip();
+    return;
+  }
+
+  hoverMouseX = nx * vw;
+  hoverMouseY = ny * vh;
+  hoverInsideCanvas = Boolean(overDesktop);
+
+  if (settings.visualMode === "hemisphere") {
+    if (dragging) {
+      skyDragging = true;
+      hemiPhysics.isDragging = true;
+      hideSkyTooltip();
+      if (dx !== 0 || dy !== 0) {
+        const hadTrack = Boolean(hemiPhysics.trackedTarget);
+        hemiPhysics.panByPixels(dx / dpr, dy / dpr);
+        if (hadTrack) updateTrackingPill();
+      }
+    } else if (dragEnded) {
+      skyDragging = false;
+      hemiPhysics.isDragging = false;
+    }
+
+    if (wheel !== 0) {
+      hemiPhysics.zoomBy(Math.pow(1.15, wheel));
+    }
+
+    if (clicked && !dragging) {
+      const aspect = engine.aspect || (vw / Math.max(1, vh));
+      const hit = hemiPhysics.pickAtScreen(hoverMouseX, hoverMouseY, vw, vh, aspect);
+      if (hit && hit.kind && hit.kind !== "star") {
+        const targetKind =
+          (hit.kind === "sun" || hit.kind === "moon" || hit.kind === "planet") ? "solar"
+          : hit.kind === "satellite" ? "satellite"
+          : "dso";
+        flyToLiveObject({
+          kind: targetKind,
+          subkind: hit.kind,
+          id: hit.id,
+          catnr: hit.catnr,
+          name: hit.name,
+          subtitle: hit.subtitle,
+        });
+      } else {
+        hemiPhysics.spawnMeteor(1.0);
+      }
+    }
+  } else {
+    if (dragEnded) {
+      skyDragging = false;
+    }
+    if (clicked) {
+      morphPhysics.spawnMeteor(1.05);
+    }
+  }
+};
 
 canvas.addEventListener("pointerenter", () => { hoverInsideCanvas = true; });
 canvas.addEventListener("pointerleave", () => {
