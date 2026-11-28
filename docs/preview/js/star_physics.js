@@ -128,7 +128,19 @@ export class StarPhysics {
     this._lastBeatSeq = 0;
     this.spotlightFlash = 0.0;
     this.songIntensity = 0.0; // Rolling 0..1 music drive (0 = calm/ambient, 1 = rock/energetic!)
+    this.beatActivity = 0.0;
     this._rockPulseCooldown = 0.0;
+    // Beat-locked constellation shake, vibration & rhythmic twirl (calm = still; rock/bass = alive!)
+    this.shakeX = 0.0;
+    this.shakeY = 0.0;
+    this._shakePosX = 0.0;
+    this._shakePosY = 0.0;
+    this._shakeVelX = 0.0;
+    this._shakeVelY = 0.0;
+    this._shakeAngle = 0.7;
+    this.beatTwirl = 0.0;
+    this.beatTwirlVel = 0.0;
+    this._twirlToggle = 1;
     this._labelMeta = { cid: "orion", name: "Orion", sub: "The Hunter", cx: 0, topY: 0.55 };
     this.hoveredStarIdx = -1;
     this.meta = new Array(MAX_STARS).fill(null);
@@ -673,13 +685,27 @@ export class StarPhysics {
 
     // Detect exact real drum onset (zero randomness — locked 1:1 to kicks & snares!)
     const isNewBeat = !isPaused && audio && audio.beat_seq > 0 && audio.beat_seq !== this._lastBeatSeq;
+    const lowEnergy = clamp(sub * 0.72 + bass * 0.56, 0.0, 1.0);
+    const bassWeight = clamp(Math.max(kick * 1.18, sub * 1.30, bass * 1.12), 0.0, 1.0);
     if (isNewBeat) {
       this._lastBeatSeq = audio.beat_seq;
-      const hitStr = clamp(Math.max(beat, kick, snare) * 1.25, 0.45, 1.0);
+      const isBassKick = audio.beat_kind === 1 || kick > 0.20;
+      const hasRealBass = lowEnergy > 0.14;
+      const hitStr = clamp(Math.max(beat, kick, snare) * 1.28, 0.48, 1.0);
       this.beatPunch = Math.max(this.beatPunch, hitStr);
       this.beatBlink = Math.max(this.beatBlink, hitStr);
-      if (kick >= snare * 0.85 || audio.beat_kind === 1) {
-        this.kickPunch = Math.max(this.kickPunch, clamp(Math.max(kick, beat) * 1.25, 0.5, 1.0));
+      if (isBassKick) {
+        this.kickPunch = Math.max(this.kickPunch, clamp(Math.max(kick, beat) * 1.32, 0.54, 1.0));
+      }
+      if (isBassKick || hasRealBass) {
+        const bassScale = isBassKick ? 1.0 : 0.68;
+        this.beatActivity = clamp(this.beatActivity + 0.40 * hitStr * bassScale, 0.0, 1.0);
+        const effPump = clamp(Math.max(this.songIntensity, this.beatActivity, hitStr * 0.85), 0.0, 1.0);
+        // Refined Morph Shake Impulse (subtle physical beat feel while keeping lyrics 100% legible!)
+        this._shakeAngle += 2.39996;
+        const shakeStr = (0.20 + 0.80 * effPump) * Math.max(0.48, bassWeight) * bassScale * (0.45 + 0.55 * glowStr);
+        this._shakeVelX += Math.cos(this._shakeAngle) * shakeStr * 0.33;
+        this._shakeVelY += Math.sin(this._shakeAngle) * shakeStr * 0.33;
       }
     }
 
@@ -694,11 +720,33 @@ export class StarPhysics {
     }
 
     if (!isPaused) {
+      this.beatActivity *= Math.exp(-safeDt * 0.54);
+      const morphPump = clamp(Math.max((this.songIntensity - 0.12) / 0.58, this.beatActivity * 0.96), 0.0, 1.0);
+
+      // High-frequency underdamped shake spring + subtle bass tremor (readable lyrics!)
+      const sxAcc = -this._shakePosX * 680.0 - this._shakeVelX * 23.0;
+      const syAcc = -this._shakePosY * 680.0 - this._shakeVelY * 23.0;
+      this._shakeVelX += sxAcc * safeDt;
+      this._shakeVelY += syAcc * safeDt;
+      this._shakePosX = clamp(this._shakePosX + this._shakeVelX * safeDt, -0.011, 0.011);
+      this._shakePosY = clamp(this._shakePosY + this._shakeVelY * safeDt, -0.011, 0.011);
+
+      const bassTremor = clamp((sub * 0.85 + bass * 0.54 - 0.16) * 2.1, 0.0, 1.0)
+        * (0.25 + 0.75 * morphPump)
+        * (0.45 + 0.55 * glowStr);
+      const vibX = (Math.sin(this.time * 192.0) * 0.65 + Math.cos(this.time * 281.0) * 0.35) * bassTremor * 0.0032;
+      const vibY = (Math.cos(this.time * 214.0) * 0.65 + Math.sin(this.time * 311.0) * 0.35) * bassTremor * 0.0032;
+      this.shakeX = clamp(this._shakePosX + vibX, -0.014, 0.014);
+      this.shakeY = clamp(this._shakePosY + vibY, -0.014, 0.014);
+
+      this.beatTwirl = 0.0;
+      this.beatTwirlVel = 0.0;
+
       this.wordRipple *= Math.exp(-safeDt * 3.0);
       this.globalAngularVel *= Math.exp(-safeDt * 1.1);
       this.globalAngle += (this.globalAngularVel + this.swirlSign * 0.005) * safeDt;
 
-      const targetBreath = 1.0 + Math.sin(this.time * 0.85) * 0.010 + this.kickPunch * 0.076 * glowStr + bass * 0.048 * glowStr + this.beatPunch * 0.032 * glowStr;
+      const targetBreath = 1.0 + Math.sin(this.time * 0.85) * 0.008 + this.kickPunch * 0.055 * glowStr + bass * 0.028 * glowStr + this.beatPunch * 0.020 * glowStr;
       this.breathScale += (targetBreath - this.breathScale) * (1.0 - Math.exp(-safeDt * 14.0));
 
       if (isNewBeat && kick > 0.68 && Math.random() < 0.24) {
@@ -751,8 +799,9 @@ export class StarPhysics {
     const pushTrail = !isPaused && this._trailAccum >= 0.022;
     if (pushTrail) this._trailAccum = 0;
 
-    const cosDrift = Math.cos(Math.sin(this.time * 0.22) * 0.032);
-    const sinDrift = Math.sin(Math.sin(this.time * 0.22) * 0.032);
+    const driftAngle = Math.sin(this.time * 0.22) * 0.032 + this.beatTwirl;
+    const cosDrift = Math.cos(driftAngle);
+    const sinDrift = Math.sin(driftAngle);
     const bandValues = [
       (sub * 0.6 + bass * 0.4), // 0: bass/sub
       mid,                      // 1: vocal mids
@@ -781,17 +830,20 @@ export class StarPhysics {
         if (this.role[i] === 0 && rawU >= 1.0) {
           this.orbitAngle[i] += this.orbitSpeed[i] * safeDt * (1.0 + energy * 1.15);
           const r = this.orbitRadius[i];
-          bx = Math.cos(this.orbitAngle[i]) * r * 1.28;
-          by = Math.sin(this.orbitAngle[i]) * r * 0.84;
-          this.tx[i] = bx;
-          this.ty[i] = by;
+          const obx = Math.cos(this.orbitAngle[i]) * r * 1.28;
+          const oby = Math.sin(this.orbitAngle[i]) * r * 0.84;
+          this.tx[i] = obx;
+          this.ty[i] = oby;
+          // Ambient stars subtly parallax-shake & twirl along with the constellation!
+          bx = obx * cosDrift - oby * sinDrift + this.shakeX * 0.48;
+          by = obx * sinDrift + oby * cosDrift + this.shakeY * 0.48;
         } else if (this.role[i] >= 1) {
           const ph = this.phase[i];
           const shimmer = (0.004 + mid * 0.0085 * glowStr) * u;
           const ox = bx * cosDrift - by * sinDrift;
           const oy = bx * sinDrift + by * cosDrift;
-          bx = ox * this.breathScale + Math.cos(this.time * 0.9 + ph) * shimmer;
-          by = oy * this.breathScale + Math.sin(this.time * 1.1 + ph) * shimmer;
+          bx = ox * this.breathScale + Math.cos(this.time * 0.9 + ph) * shimmer + this.shakeX;
+          by = oy * this.breathScale + Math.sin(this.time * 1.1 + ph) * shimmer + this.shakeY;
         }
 
         this.x[i] = bx;
@@ -803,18 +855,18 @@ export class StarPhysics {
       const phWave = 0.65 + 0.35 * Math.sin(this.time * 2.6 + this.phase[i]);
       const isSpot = i === this.spotlightStar;
 
-      // Calm drumless music = serene gentle sway; Real kicks & snares = unmistakable round star pop!
-      const intensityScale = 0.35 + this.songIntensity * 0.75;
+      // Restrained musical round-star pulse (crisp beat feel without overwhelming nearby lyrics!)
+      const intensityScale = 0.30 + this.songIntensity * 0.55;
       const musicSizePulse = this.role[i] >= 1
-        ? (1.0 + (this.beatPunch * 0.48 + this.kickPunch * 0.24 + bVal * 0.26 * intensityScale) * glowStr)
-        : (1.0 + (this.kickPunch * 0.16 + bVal * 0.08) * glowStr);
-      const breathWave = isSpot ? (0.5 + 0.5 * Math.sin(this.time * (3.6 + this.songIntensity * 2.4))) : 0.0;
+        ? (1.0 + (this.beatPunch * 0.28 + this.kickPunch * 0.14 + bVal * 0.16 * intensityScale) * glowStr)
+        : (1.0 + (this.kickPunch * 0.09 + bVal * 0.04) * glowStr);
+      const breathWave = isSpot ? (0.5 + 0.5 * Math.sin(this.time * (3.6 + this.songIntensity * 2.0))) : 0.0;
       const spotBeatMul = isSpot
-        ? (1.26 + breathWave * 0.14 + this.spotlightFlash * 0.20 + this.beatPunch * 0.30 * glowStr)
+        ? (1.20 + breathWave * 0.10 + this.spotlightFlash * 0.16 + this.beatPunch * 0.16 * glowStr)
         : 1.0;
       const spotBrightMul = isSpot
-        ? (1.24 + breathWave * 0.14 + this.spotlightFlash * 0.22 + this.beatPunch * 0.26 * glowStr)
-        : (this.role[i] >= 1 ? (1.0 + this.beatPunch * 0.26 * glowStr) : 1.0);
+        ? (1.16 + breathWave * 0.10 + this.spotlightFlash * 0.16 + this.beatPunch * 0.16 * glowStr)
+        : (this.role[i] >= 1 ? (1.0 + this.beatPunch * 0.16 * glowStr) : 1.0);
       const baseSizeBoost = this.role[i] >= 1 ? 1.12 : 1.04;
       this.size[i] = (this.startSize[i] + (this.targetSize[i] - this.startSize[i]) * sEase) * baseSizeBoost * musicSizePulse * spotBeatMul;
       this.bright[i] = (this.startBright[i] + (this.targetBright[i] - this.startBright[i]) * sEase) * spotBrightMul;
@@ -872,11 +924,11 @@ export class StarPhysics {
               e.draw = Math.min(1.0, e.draw + e.speed * safeDt);
             }
             const isLitEdge = (e.a === this.spotlightStar || e.b === this.spotlightStar);
-            const beatLinePunch = (this.beatPunch * 0.95 + this.kickPunch * 0.55 + this.songIntensity * bass * 0.30) * glowStr;
-            const targetA = Math.min(1.35, e.targetAlpha * (0.72 + beatLinePunch * 1.05 + energy * 0.14 * glowStr) * (isLitEdge ? 1.22 : 1.0));
-            const alphaRate = targetA > e.alpha ? 28.0 : 8.5;
+            const beatLinePunch = (this.beatPunch * 0.50 + this.kickPunch * 0.28 + this.songIntensity * bass * 0.14) * glowStr;
+            const targetA = Math.min(0.92, e.targetAlpha * (0.68 + beatLinePunch * 0.62 + energy * 0.08 * glowStr) * (isLitEdge ? 1.15 : 1.0));
+            const alphaRate = targetA > e.alpha ? 24.0 : 8.5;
             e.alpha += (targetA - e.alpha) * (1.0 - Math.exp(-safeDt * alphaRate));
-            e.weight = (isLitEdge ? 1.28 : 1.06) + beatLinePunch * 1.45;
+            e.weight = (isLitEdge ? 1.20 : 1.02) + beatLinePunch * 0.62;
           }
 
           if (e.pulse >= 0) {

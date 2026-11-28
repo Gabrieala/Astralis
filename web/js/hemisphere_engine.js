@@ -170,6 +170,7 @@ export class HemisphereEngine {
     this.band = new Uint8Array(HEMI_MAX_STARS);
     this.role = new Uint8Array(HEMI_MAX_STARS);
     this._starVis = new Float32Array(HEMI_MAX_STARS);
+    this._starTheta = new Float32Array(HEMI_MAX_STARS);
 
     // Satellite motion trails (small dedicated slots [0..15])
     this.trailX = new Float32Array(MAX_RENDER_BODIES * HEMI_TRAIL_LEN);
@@ -248,6 +249,8 @@ export class HemisphereEngine {
     this.camForward = [0, 0, 1];
     this.camRight = [1, 0, 0];
     this.camUp = [0, 1, 0];
+    this.renderRight = [1, 0, 0];
+    this.renderUp = [0, 1, 0];
     this.targetForward = [0, 0, 1];
     this.targetUp = [0, 1, 0];
 
@@ -257,6 +260,28 @@ export class HemisphereEngine {
     this.zoom = 1.15;
     this.targetZoom = 1.15;
     this.domeScale = 1.12;
+
+    // Reactive 3D Dome Dynamics (calm = chill tide; rock/bass = hard beat-zoom, shockwave ripples & groove roll)
+    this.beatActivity = 0.0; // Volume-invariant drum cadence drive (0 = calm, 1 = driving beat!)
+    this.domeKick = 0.0;
+    this.domeZoomOffset = 0.0;
+    this.domeZoomVel = 0.0;
+    this.domeRoll = 0.0;
+    this.domeRollVel = 0.0;
+    this._beatToggle = 1;
+    // Physical Beat Impact Shake & Sub-Bass Tremor Vibration (locked across entire 3D dome!)
+    this.domeShakeX = 0.0;
+    this.domeShakeY = 0.0;
+    this._shakePosX = 0.0;
+    this._shakePosY = 0.0;
+    this._shakeVelX = 0.0;
+    this._shakeVelY = 0.0;
+    this._shakeAngle = 0.7;
+    this.domeWave1Pos = 2.0;
+    this.domeWave1Amp = 0.0;
+    this.domeWave2Pos = 2.0;
+    this.domeWave2Amp = 0.0;
+    this._waveNextSlot = 0;
 
     this.musicGlowStrength = 1.0;
     this.transitionSpeedMul = 1.0;
@@ -898,15 +923,15 @@ export class HemisphereEngine {
   _projectVec3(px3, py3, pz3, fx, fy, fz, rx, ry, rz, ux, uy, uz, domeScale) {
     const cz = px3 * fx + py3 * fy + pz3 * fz;
     const vis = clamp((cz - 0.02) / 0.28, 0.0, 1.0);
-    if (vis <= 0.001) return { vis: 0, x: 9, y: 9 };
+    if (vis <= 0.001) return { vis: 0, x: 9, y: 9, theta: 2.0 };
     const cx = px3 * rx + py3 * ry + pz3 * rz;
     const cy = px3 * ux + py3 * uy + pz3 * uz;
     const theta = Math.acos(clamp(cz, -1.0, 1.0));
     const sinT = Math.hypot(cx, cy);
     const rProj = (theta / (Math.PI * 0.5)) * domeScale;
-    const x = sinT > 1e-6 ? (cx / sinT) * rProj : 0.0;
-    const y = sinT > 1e-6 ? (cy / sinT) * rProj : 0.0;
-    return { vis, x, y };
+    const x = (sinT > 1e-6 ? (cx / sinT) * rProj : 0.0) + this.domeShakeX;
+    const y = (sinT > 1e-6 ? (cy / sinT) * rProj : 0.0) + this.domeShakeY;
+    return { vis, x, y, theta };
   }
 
   step(dt, audio = null, isPaused = false) {
@@ -982,7 +1007,8 @@ export class HemisphereEngine {
       // Gently relax adaptive slew back toward serene baseline once settled
       this.activeSlewRate += (2.4 - this.activeSlewRate) * (1.0 - Math.exp(-safeDt * 1.4));
       if (!isPaused) {
-        const sidereal = 0.004 * safeDt;
+        const pumpDrift = clamp((this.songIntensity - 0.16) / 0.65, 0.0, 1.0);
+        const sidereal = (0.004 + pumpDrift * 0.011 + bass * pumpDrift * 0.010) * safeDt;
         this.targetForward = rotateAroundAxis(
           this.targetForward[0], this.targetForward[1], this.targetForward[2],
           0, 1, 0, sidereal
@@ -1007,24 +1033,116 @@ export class HemisphereEngine {
       this.hoveredCenterId = this.focusedId;
     }
 
-    const [fx, fy, fz] = this.camForward;
-    const [rx, ry, rz] = this.camRight;
-    const [ux, uy, uz] = this.camUp;
-
-    // Detect exact real drum onset (zero randomness — locked 1:1 to kicks & snares!)
+    // Detect exact real drum onset — isolate PURE low-frequency bass/kick (22..118 Hz) for the 3D dome!
     const isNewBeat = !isPaused && audio && audio.beat_seq > 0 && audio.beat_seq !== this._lastBeatSeq;
+    const lowEnergy = clamp(sub * 0.72 + bass * 0.56, 0.0, 1.0);
+    const bassWeight = clamp(Math.max(kick * 1.18, sub * 1.32, bass * 1.12), 0.0, 1.0);
+
     if (isNewBeat) {
       this._lastBeatSeq = audio.beat_seq;
-      const hitStr = clamp(Math.max(beat, kick, snare) * 1.25, 0.45, 1.0);
+      const isBassKick = audio.beat_kind === 1 || kick > 0.20;
+      const hasRealBass = lowEnergy > 0.14;
+      const hitStr = clamp(Math.max(beat, kick, snare) * 1.32, 0.52, 1.0);
+      // Stars & focused constellation lines stay crisp on both kicks & snares
       this.beatPunch = Math.max(this.beatPunch, hitStr);
       this.beatBlink = Math.max(this.beatBlink, hitStr);
-      if (kick >= snare * 0.85 || audio.beat_kind === 1) {
-        this.kickPunch = Math.max(this.kickPunch, clamp(Math.max(kick, beat) * 1.25, 0.5, 1.0));
+
+      // Whole-dome shake, vibration, beat-zoom & shockwaves fire at 100% on bass kicks and 68% on full-kit beats with bass,
+      // while staying 0% completely chill on pure vocals/snares with no low-end bass!
+      if (isBassKick || hasRealBass) {
+        const bassScale = isBassKick ? 1.0 : 0.68;
+        const lowHit = clamp(Math.max(kick * 1.35, lowEnergy * 1.25, beat * 0.95 * bassScale), 0.45, 1.0) * bassScale;
+        this.kickPunch = Math.max(this.kickPunch, lowHit);
+        this.beatActivity = clamp(this.beatActivity + 0.42 * lowHit, 0.0, 1.0);
+        const effPump = clamp(Math.max(this.songIntensity, this.beatActivity, lowHit * 0.92), 0.0, 1.0);
+
+        // 1. Silky, subtle 3D Dome Bass-Zoom Breath
+        const zoomGain = (0.14 + 0.86 * effPump) * Math.max(0.45, bassWeight) * bassScale * (0.40 + 0.60 * glowStr);
+        this.domeZoomVel += zoomGain * 0.45;
+        this.domeKick = Math.max(this.domeKick, clamp(Math.max(0.45, bassWeight) * bassScale * (0.22 + 0.78 * effPump), 0.0, 0.85));
+
+        // 2. Whisper-soft critically damped bass micro-kick (~1px tactile feel, zero jitter!)
+        if (!this.isDragging && isBassKick) {
+          this._shakeAngle += 2.39996;
+          const shakeStr = (0.18 + 0.82 * effPump) * Math.max(0.45, bassWeight) * (0.40 + 0.60 * glowStr);
+          this._shakeVelX += Math.cos(this._shakeAngle) * shakeStr * 0.045;
+          this._shakeVelY += Math.sin(this._shakeAngle) * shakeStr * 0.045;
+        }
       }
     }
 
-    const targetBreath = 1.0 + this.kickPunch * 0.036 * glowStr + bass * 0.022 * glowStr + this.beatPunch * 0.014 * glowStr;
-    this.breathScale += (targetBreath - this.breathScale) * (1.0 - Math.exp(-safeDt * 14.0));
+    const pump = clamp(Math.max((this.songIntensity - 0.12) / 0.58, this.beatActivity * 0.96), 0.0, 1.0);
+
+    if (!isPaused) {
+      // Sustained low-frequency 808 / bass drops also keep bassActivity awake (zero vocal/mid bleed!)
+      if (lowEnergy > 0.28) {
+        this.beatActivity = Math.max(this.beatActivity, clamp((lowEnergy - 0.24) * 1.45, 0.0, 0.92));
+      }
+      this.beatActivity *= Math.exp(-safeDt * 0.54);
+
+      // Gentle bass swell + calm oceanic tide for the 3D dome spring target
+      const calmTide = Math.sin(this.time * 0.85) * 0.005 * (1.0 - pump * 0.75);
+      const bassSwell = (sub * 0.014 + bass * 0.010) * (0.25 + 0.75 * pump) * (0.40 + 0.60 * glowStr);
+      const targetZoomOff = calmTide + bassSwell;
+      const zAcc = (targetZoomOff - this.domeZoomOffset) * 72.0 - this.domeZoomVel * 16.0;
+      this.domeZoomVel += zAcc * safeDt;
+      this.domeZoomOffset = clamp(this.domeZoomOffset + this.domeZoomVel * safeDt, -0.010, 0.036);
+
+      // Whisper-soft critically damped bass micro-kick (no twirl/roll, zero shockwave rings!)
+      this.domeRoll = 0.0;
+      this.domeRollVel = 0.0;
+      this.domeWave1Pos = 2.0;
+      this.domeWave1Amp = 0.0;
+      this.domeWave2Pos = 2.0;
+      this.domeWave2Amp = 0.0;
+      if (this.isDragging) {
+        const sd = Math.exp(-safeDt * 18.0);
+        this._shakePosX *= sd;
+        this._shakePosY *= sd;
+        this._shakeVelX = 0.0;
+        this._shakeVelY = 0.0;
+        this.domeShakeX = this._shakePosX;
+        this.domeShakeY = this._shakePosY;
+      } else {
+        const sxAcc = -this._shakePosX * 260.0 - this._shakeVelX * 32.0;
+        const syAcc = -this._shakePosY * 260.0 - this._shakeVelY * 32.0;
+        this._shakeVelX += sxAcc * safeDt;
+        this._shakeVelY += syAcc * safeDt;
+        this._shakePosX = clamp(this._shakePosX + this._shakeVelX * safeDt, -0.0020, 0.0020);
+        this._shakePosY = clamp(this._shakePosY + this._shakeVelY * safeDt, -0.0020, 0.0020);
+
+        this.domeShakeX = this._shakePosX;
+        this.domeShakeY = this._shakePosY;
+      }
+
+      // Keep sustained dome glow subtle & locked to low-frequency sub/bass
+      const bassFloor = clamp((sub * 0.65 + bass * 0.48) * (0.20 + 0.80 * pump), 0.0, 0.65);
+      this.domeKick = Math.max(this.domeKick * Math.exp(-safeDt * 6.5), bassFloor * 0.42);
+    }
+
+    // Build rolled 3D projection axes around camForward so stars, constellations, planets & Milky Way stay in 100% lockstep!
+    const [fx, fy, fz] = this.camForward;
+    const [crx, cry, crz] = this.camRight;
+    const [cux, cuy, cuz] = this.camUp;
+    let rx = crx, ry = cry, rz = crz;
+    let ux = cux, uy = cuy, uz = cuz;
+    if (Math.abs(this.domeRoll) > 1e-5) {
+      const cR = Math.cos(this.domeRoll);
+      const sR = Math.sin(this.domeRoll);
+      rx = crx * cR + cux * sR;
+      ry = cry * cR + cuy * sR;
+      rz = crz * cR + cuz * sR;
+      ux = cux * cR - crx * sR;
+      uy = cuy * cR - cry * sR;
+      uz = cuz * cR - crz * sR;
+    }
+    this.renderRight[0] = rx; this.renderRight[1] = ry; this.renderRight[2] = rz;
+    this.renderUp[0] = ux; this.renderUp[1] = uy; this.renderUp[2] = uz;
+
+    if (!isPaused) {
+      const targetBreath = 1.0 + this.kickPunch * 0.014 * glowStr + bass * 0.008 * glowStr;
+      this.breathScale += (targetBreath - this.breathScale) * (1.0 - Math.exp(-safeDt * 12.0));
+    }
 
     if (!isPaused) {
       if (this.starHop.active) {
@@ -1035,9 +1153,16 @@ export class HemisphereEngine {
         }
       }
 
-      // Rolling music intensity (0 = calm ballad/acoustic, 1 = rock/driving/energetic!)
-      const rawDrive = clamp((energy * 1.15 + bass * 0.90 + beat * 0.85 - 0.16) * 1.60, 0.0, 1.0);
-      const driveRate = rawDrive > this.songIntensity ? 2.2 : 0.65;
+      // Rolling music intensity (0 = calm ballad/acoustic, 1 = rock/bass/energetic — works at ANY volume!)
+      const rawDrive = clamp(
+        Math.max(
+          (energy * 1.18 + bass * 1.15 + sub * 0.80 + beat * 0.95 - 0.30) * 1.75,
+          this.beatActivity * 1.05
+        ),
+        0.0,
+        1.0
+      );
+      const driveRate = rawDrive > this.songIntensity ? 3.2 : 0.60;
       this.songIntensity += (rawDrive - this.songIntensity) * (1.0 - Math.exp(-safeDt * driveRate));
 
       // Crisp beat-locked punch & blink envelopes (snap on kick/snare, relax cleanly before next beat!)
@@ -1075,9 +1200,15 @@ export class HemisphereEngine {
 
     const bandValues = [sub * 0.6 + bass * 0.4, mid, high, energy];
 
-    const domeScale = 1.12 * this.zoom * this.breathScale;
+    const domeScale = 1.12 * this.zoom * (1.0 + this.domeZoomOffset) * this.breathScale;
     this.domeScale = domeScale;
     const starVis = this._starVis;
+    const starTheta = this._starTheta;
+    const w1Pos = this.domeWave1Pos;
+    const w1Amp = this.domeWave1Amp;
+    const w2Pos = this.domeWave2Pos;
+    const w2Amp = this.domeWave2Amp;
+    const hasWaves = w1Amp > 0.008 || w2Amp > 0.008;
     const activeHighlightIdx = this.freeLook
       ? (this.constellationMeta.get(this.hoveredCenterId)?.idx ?? this.focusedIdx)
       : this.focusedIdx;
@@ -1091,6 +1222,7 @@ export class HemisphereEngine {
       );
       const vis = proj.vis;
       starVis[i] = vis;
+      starTheta[i] = proj.theta;
 
       if (vis <= 0.001) {
         this.x[i] = 9.0;
@@ -1105,11 +1237,26 @@ export class HemisphereEngine {
       this.x[i] = proj.x;
       this.y[i] = proj.y;
 
+      // 3D Spherical Shockwave hit at this star's true angular distance from dome center!
+      let waveHit = 0.0;
+      if (hasWaves) {
+        if (w1Amp > 0.008) {
+          const d1 = (proj.theta - w1Pos) * 6.5;
+          if (d1 > -2.6 && d1 < 2.6) waveHit += Math.exp(-d1 * d1) * w1Amp;
+        }
+        if (w2Amp > 0.008) {
+          const d2 = (proj.theta - w2Pos) * 6.5;
+          if (d2 > -2.6 && d2 < 2.6) waveHit += Math.exp(-d2 * d2) * w2Amp;
+        }
+        if (waveHit > 1.2) waveHit = 1.2;
+      }
+
       const owner = this.starOwner[i];
       if (owner === -1) {
-        // Real Hipparcos 3D sky background star
-        this.size[i] = this.baseSize[i] * (0.75 + 0.25 * vis);
-        this.bright[i] = this.baseBright[i] * (0.25 + 0.75 * vis);
+        // Real Hipparcos 3D sky background star — calm & restrained subtle bass shimmer
+        const bgBeat = this.domeKick * 0.12 * pump * (0.45 + 0.55 * glowStr);
+        this.size[i] = this.baseSize[i] * (0.75 + 0.25 * vis) * (1.0 + bgBeat * 0.35);
+        this.bright[i] = this.baseBright[i] * (0.25 + 0.75 * vis) * (1.0 + bgBeat * 0.45);
         this.role[i] = 0;
         this.musicGlow[i] = 0.0;
         this.flare[i] = 0.0;
@@ -1122,32 +1269,34 @@ export class HemisphereEngine {
       const isSpotlight = i === this.spotlightStar;
       const focusMul = this.viewingMode
         ? (isFocused ? 1.14 : 0.76)
-        : (isFocused ? 1.18 : 0.48);
+        : (isFocused ? 1.16 : 0.46);
       const horizonDim = 0.22 + 0.78 * Math.pow(vis, 0.85);
       const bVal = bandValues[this.band[i]] || 0;
       const phWave = 0.65 + 0.35 * Math.sin(this.time * 2.6 + this.phase[i]);
 
-      // Calm drumless music = serene gentle sway; Real kicks & snares = unmistakable round star pop!
-      const intensityScale = 0.35 + this.songIntensity * 0.75;
+      // Restrained musical round-star pulse (clear beat feel without overwhelming nearby lyrics!)
+      const intensityScale = 0.30 + this.songIntensity * 0.55;
       const musicSizePulse = isFocused
-        ? (1.0 + (this.beatPunch * 0.48 + this.kickPunch * 0.24 + bVal * 0.26 * intensityScale) * glowStr)
-        : (1.0 + (this.kickPunch * 0.14 + bVal * 0.06) * glowStr);
-      const breathWave = isSpotlight ? (0.5 + 0.5 * Math.sin(this.time * (3.6 + this.songIntensity * 2.4))) : 0.0;
+        ? (1.0 + (this.beatPunch * 0.28 + this.kickPunch * 0.14 + bVal * 0.16 * intensityScale) * glowStr)
+        : (1.0 + (this.domeKick * 0.12 * pump + bVal * 0.04) * (0.45 + 0.55 * glowStr));
+      const breathWave = isSpotlight ? (0.5 + 0.5 * Math.sin(this.time * (3.6 + this.songIntensity * 2.0))) : 0.0;
       const spotSizeMul = isSpotlight
-        ? (1.28 + breathWave * 0.14 + this.spotlightFlash * 0.22 + this.beatPunch * 0.32 * glowStr)
+        ? (1.22 + breathWave * 0.10 + this.spotlightFlash * 0.16 + this.beatPunch * 0.18 * glowStr)
         : 1.0;
       const spotBrightMul = isSpotlight
-        ? (1.26 + breathWave * 0.14 + this.spotlightFlash * 0.24 + this.beatPunch * 0.28 * glowStr)
-        : (isFocused ? (1.0 + this.beatPunch * 0.26 * glowStr) : 1.0);
+        ? (1.18 + breathWave * 0.10 + this.spotlightFlash * 0.16 + this.beatPunch * 0.16 * glowStr)
+        : (isFocused
+            ? (1.0 + this.beatPunch * 0.16 * glowStr)
+            : (1.0 + this.domeKick * 0.14 * pump * (0.45 + 0.55 * glowStr)));
 
       // Fuller round star proportions that breathe & pulse cleanly with the music!
-      this.size[i] = this.baseSize[i] * (isFocused ? 1.24 : 0.94) * (0.80 + 0.20 * vis) * zoomSizeMul * musicSizePulse * spotSizeMul * (isHovered ? 1.24 : 1.0);
+      this.size[i] = this.baseSize[i] * (isFocused ? 1.24 : 0.96) * (0.80 + 0.20 * vis) * zoomSizeMul * musicSizePulse * spotSizeMul * (isHovered ? 1.24 : 1.0);
       this.bright[i] = this.baseBright[i] * focusMul * horizonDim * spotBrightMul * (isHovered ? 1.24 : 1.0);
-      this.role[i] = isSpotlight ? 2 : (isFocused ? (this.isPrimary[i] ? 2 : 1) : (this.isPrimary[i] && this.baseSize[i] > 4.6 ? 1 : 0));
+      this.role[i] = isSpotlight ? 2 : (isFocused ? (this.isPrimary[i] ? 2 : 1) : ((this.isPrimary[i] && this.baseSize[i] > 4.6) || waveHit > 0.38 ? 1 : 0));
 
-      const roleMult = isSongStar ? 0.48 : (isFocused ? 0.28 : 0.04);
-      const targetMG = clamp((bVal * 0.65 + beat * 0.35) * phWave * roleMult * glowStr * vis, 0.0, 0.68);
-      this.musicGlow[i] += (targetMG - this.musicGlow[i]) * (1.0 - Math.exp(-safeDt * 11.0));
+      const roleMult = isSongStar ? 0.52 : (isFocused ? 0.32 : 0.08);
+      const targetMG = clamp(((bVal * 0.65 + beat * 0.35) * phWave * roleMult + waveHit * 0.42) * glowStr * vis, 0.0, 0.78);
+      this.musicGlow[i] += (targetMG - this.musicGlow[i]) * (1.0 - Math.exp(-safeDt * 12.0));
 
       if (isSpotlight) {
         // Refined, compact round spotlight glow that breathes gently with the beat (never oversized!)
@@ -1168,7 +1317,7 @@ export class HemisphereEngine {
     if (this.showEcliptic) {
       const ev = this.eclipticVecs;
       const nEcl = ev.length;
-      const eclAlphaBase = this.viewingMode ? 0.16 : 0.095;
+      const eclAlphaBase = (this.viewingMode ? 0.16 : 0.095) + this.domeKick * (0.04 + 0.07 * pump) * glowStr;
       let prevP = null;
       for (let k = 0; k <= nEcl; k++) {
         const v = ev[k % nEcl];
@@ -1232,6 +1381,8 @@ export class HemisphereEngine {
 
     // 3a. Deep-Sky Nebulae, Galaxies & Star Clusters (rendered first so planets/satellites float cleanly above!)
     if (this.showDeepSky) {
+      const dsoBeatScale = 1.0 + this.domeKick * (0.03 + 0.08 * pump) * glowStr;
+      const dsoBeatAlpha = 1.0 + this.domeKick * (0.06 + 0.14 * pump) * glowStr;
       for (const dso of DEEP_SKY_CATALOG) {
         const [dx3, dy3, dz3] = raDecDegToUnitVec(dso.ra, dso.dec);
         const proj = this._projectVec3(dx3, dy3, dz3, fx, fy, fz, rx, ry, rz, ux, uy, uz, domeScale);
@@ -1240,11 +1391,11 @@ export class HemisphereEngine {
         this.renderBodies.push({
           x: proj.x,
           y: proj.y,
-          pxSize: dso.pxRadius * dsoZoomScale * (isHov ? 1.16 : 1.0),
+          pxSize: dso.pxRadius * dsoZoomScale * dsoBeatScale * (isHov ? 1.16 : 1.0),
           bodyType: dso.bodyType,
           phaseParam: dso.variant,
           angle: dso.angle,
-          alpha: proj.vis * (isHov ? 1.0 : 0.88),
+          alpha: clamp(proj.vis * (isHov ? 1.0 : 0.88) * dsoBeatAlpha, 0.0, 1.0),
           meta: {
             id: dso.id,
             kind: dso.kind,
@@ -1358,22 +1509,36 @@ export class HemisphereEngine {
 
       const isFocusedEdge = this.edgeOwner[i] === activeHighlightIdx;
       const isLitEdge = (e.a === this.spotlightStar || e.b === this.spotlightStar);
-      // Calm drumless tracks keep lines serene; Real drum beats visibly punch constellation line glow & thickness!
+
+      // Whole-dome shockwave illuminates surrounding constellations across the entire 3D vault as each beat ripples outward!
+      let edgeWaveHit = 0.0;
+      if (!isFocusedEdge && hasWaves) {
+        const midT = (starTheta[e.a] + starTheta[e.b]) * 0.5;
+        if (w1Amp > 0.008) {
+          const d1 = (midT - w1Pos) * 5.8;
+          if (d1 > -2.6 && d1 < 2.6) edgeWaveHit += Math.exp(-d1 * d1) * w1Amp;
+        }
+        if (w2Amp > 0.008) {
+          const d2 = (midT - w2Pos) * 5.8;
+          if (d2 > -2.6 && d2 < 2.6) edgeWaveHit += Math.exp(-d2 * d2) * w2Amp;
+        }
+      }
+
+      // Calm tracks keep lines serene; beats give a refined, clean pulse without overpowering lyrics!
       const beatLinePunch = isFocusedEdge
-        ? (this.beatPunch * 0.95 + this.kickPunch * 0.55 + this.songIntensity * bass * 0.30) * glowStr
-        : 0.0;
+        ? (this.beatPunch * 0.50 + this.kickPunch * 0.28 + this.songIntensity * bass * 0.14) * glowStr
+        : (this.domeKick * 0.09 * pump) * (0.45 + 0.55 * glowStr);
       const steadyA = this.viewingMode
-        ? (isFocusedEdge ? (0.48 + energy * 0.10 * glowStr) : (0.16 + energy * 0.03 * glowStr))
+        ? (isFocusedEdge ? (0.44 + energy * 0.06 * glowStr) : (0.15 + energy * 0.02 * glowStr))
         : (isFocusedEdge
-            ? (0.48 + energy * 0.08 * glowStr) * (isLitEdge ? 1.22 : 1.0)
-            : (0.050 + energy * 0.012 * glowStr));
-      // Instant beat attack (zero sluggish smoothing swallowing drum hits!), crisp decay!
-      const targetA = Math.min(1.35, (steadyA + beatLinePunch * 0.72) * vMin);
-      const alphaRate = targetA > e.alpha ? 28.0 : 8.5;
+            ? (0.42 + energy * 0.05 * glowStr) * (isLitEdge ? 1.15 : 1.0)
+            : (0.048 + energy * 0.010 * glowStr));
+      const targetA = Math.min(0.92, (steadyA + beatLinePunch * (isFocusedEdge ? 0.48 : 0.35)) * vMin);
+      const alphaRate = targetA > e.alpha ? 24.0 : 8.5;
       e.alpha += (targetA - e.alpha) * (1.0 - Math.exp(-safeDt * alphaRate));
       e.weight = isFocusedEdge
-        ? ((isLitEdge ? 1.32 : 1.12) + beatLinePunch * 1.45)
-        : 0.62;
+        ? ((isLitEdge ? 1.22 : 1.04) + beatLinePunch * 0.62)
+        : (0.62 + beatLinePunch * 0.25);
       e.draw = 1.0;
 
       if (!isPaused && e.pulse >= 0) {

@@ -136,6 +136,15 @@ fn run_wasapi_session(
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let active_dev_id = device
+            .GetId()
+            .ok()
+            .and_then(|p| {
+                let s = p.to_string().ok();
+                CoTaskMemFree(Some(p.0 as *const _));
+                s
+            })
+            .unwrap_or_default();
         let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
 
         let mix_fmt_ptr = audio_client.GetMixFormat()?;
@@ -180,6 +189,7 @@ fn run_wasapi_session(
         let mut fft_buf: Vec<Complex<f32>> = vec![Complex::new(0.0, 0.0); FFT_SIZE];
 
         let mut smooth = AudioMetrics::default();
+        let mut agc_rms: f32 = 0.0;
         let mut prev_kick: f32 = 0.0;
         let mut kick_avg: f32 = 0.03;
         let mut prev_snare: f32 = 0.0;
@@ -187,6 +197,7 @@ fn run_wasapi_session(
         let mut beat_seq: u64 = 0;
         let mut last_onset = Instant::now() - Duration::from_secs(1);
         let mut last_fft = Instant::now();
+        let mut last_dev_check = Instant::now();
 
         while !stop_flag.load(Ordering::Relaxed) {
             if !enabled.load(Ordering::Relaxed) {
@@ -197,6 +208,25 @@ fn run_wasapi_session(
 
             let mut packet_len = capture_client.GetNextPacketSize()?;
             if packet_len == 0 {
+                // If user switched speakers/headphones while Astralis is open, auto-reconnect immediately!
+                if last_dev_check.elapsed() >= Duration::from_secs(2) {
+                    last_dev_check = Instant::now();
+                    if let Ok(cur_dev) = enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
+                        let cur_id = cur_dev
+                            .GetId()
+                            .ok()
+                            .and_then(|p| {
+                                let s = p.to_string().ok();
+                                CoTaskMemFree(Some(p.0 as *const _));
+                                s
+                            })
+                            .unwrap_or_default();
+                        if !cur_id.is_empty() && cur_id != active_dev_id {
+                            let _ = audio_client.Stop();
+                            return Ok(());
+                        }
+                    }
+                }
                 // Decay smoothly during silence (WASAPI loopback emits no packets when silent)
                 if last_fft.elapsed() > Duration::from_millis(60) {
                     smooth.sub *= 0.80;
@@ -264,13 +294,52 @@ fn run_wasapi_session(
                 packet_len = capture_client.GetNextPacketSize()?;
             }
 
-            // Tight ~45Hz (22ms) FFT for razor-sharp kick/snare onset sync (<0.3% CPU in Rust!)
+            // Tight ~45Hz (22ms) FFT with Rolling RMS Automatic Gain Control (AGC) so low Windows
+            // speaker/headphone volume (even 2%-10% mixer volume!) reacts just as crisply as 100%!
             if ring.len() >= FFT_SIZE {
                 let start = ring.len() - FFT_SIZE;
                 if last_fft.elapsed() >= Duration::from_millis(22) {
                     last_fft = Instant::now();
+
+                    let mut sq_sum = 0.0f32;
                     for i in 0..FFT_SIZE {
-                        fft_buf[i] = Complex::new(ring[start + i] * hann[i], 0.0);
+                        let s = ring[start + i];
+                        sq_sum += s * s;
+                    }
+                    let rms = (sq_sum / FFT_SIZE as f32).sqrt();
+
+                    // True silence gate (~ -75 dBFS): decay cleanly when music is paused/muted!
+                    if rms < 0.00018 {
+                        agc_rms = 0.0;
+                        smooth.sub *= 0.78;
+                        smooth.bass *= 0.78;
+                        smooth.mid *= 0.78;
+                        smooth.high *= 0.78;
+                        smooth.energy *= 0.78;
+                        smooth.beat *= 0.65;
+                        smooth.kick *= 0.62;
+                        smooth.snare *= 0.62;
+                        smooth.active = if smooth.energy > 0.015 { 1.0 } else { 0.0 };
+                        if let Ok(mut out) = metrics_out.lock() {
+                            *out = smooth;
+                        }
+                        ring.drain(0..start);
+                        continue;
+                    }
+
+                    // Instant-lock rolling AGC: snaps on frame 1 so ANY Windows volume (2% to 100%)
+                    // immediately hits full dynamic range while preserving sharp kick/snare transients!
+                    if agc_rms <= 0.0 {
+                        agc_rms = rms;
+                    } else if rms > agc_rms {
+                        agc_rms = agc_rms * 0.88 + rms * 0.12;
+                    } else {
+                        agc_rms = agc_rms * 0.965 + rms * 0.035;
+                    }
+                    let agc_gain = (0.20 / agc_rms.max(0.00025)).clamp(1.0, 420.0);
+
+                    for i in 0..FFT_SIZE {
+                        fft_buf[i] = Complex::new(ring[start + i] * agc_gain * hann[i], 0.0);
                     }
                     fft.process(&mut fft_buf);
 
@@ -295,8 +364,8 @@ fn run_wasapi_session(
                         (raw_sub * 0.28 + raw_bass * 0.34 + raw_mid * 0.24 + raw_high * 0.14)
                             .clamp(0.0, 1.0);
 
-                    // Dual-band spectral flux onset detector:
-                    // 1) Kick / Low-end drum punch (35-145 Hz)
+                    // Dual-band spectral flux onset detector (exact v1.0.0 snappy 2048-pt feel!):
+                    // 1) Kick / Low-end drum punch (22-145 Hz)
                     let raw_kick = (raw_sub * 0.62 + raw_bass * 0.52).clamp(0.0, 1.0);
                     let kick_flux = (raw_kick - prev_kick).max(0.0);
                     prev_kick = prev_kick * 0.35 + raw_kick * 0.65;
@@ -352,5 +421,30 @@ fn run_wasapi_session(
 
         let _ = audio_client.Stop();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wasapi_agc_live_capture() {
+        let analyzer = AudioAnalyzer::new();
+        analyzer.start();
+        let mut max_e = 0.0f32;
+        let mut max_b = 0.0f32;
+        let mut max_beat = 0.0f32;
+        let mut max_seq = 0u64;
+        for _ in 0..35 {
+            thread::sleep(Duration::from_millis(35));
+            let m = analyzer.get_metrics();
+            max_e = max_e.max(m.energy);
+            max_b = max_b.max(m.bass);
+            max_beat = max_beat.max(m.beat);
+            max_seq = max_seq.max(m.beat_seq);
+        }
+        analyzer.stop();
+        println!("LIVE AGC 1.2s: max_energy={max_e:.3} max_bass={max_b:.3} max_beat={max_beat:.3} beat_seq={max_seq}");
     }
 }

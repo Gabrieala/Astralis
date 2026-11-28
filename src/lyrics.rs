@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-const USER_AGENT: &str = "AstralisVisualizer/1.0 (Desktop Constellation Lyric App)";
-const PACING_VERSION: u32 = 8;
+const USER_AGENT: &str = "AstralisVisualizer/1.1 (Desktop Constellation Lyric App)";
+const PACING_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LyricWord {
@@ -283,6 +283,7 @@ fn parse_ttml_time_ms(raw: &str) -> Option<i64> {
 
 /// Parse Apple Music / Boidu TTML into exact millisecond lines & merged word-level timestamps!
 /// Intelligently merges syllable-split spans (e.g. `<span>e</span><span>nough</span>` -> `"enough"`).
+#[allow(dead_code)]
 pub fn parse_boidu_ttml(ttml: &str, fallback_dur_ms: i64) -> (Vec<LyricLine>, bool, i64) {
     let (lines, word_synced, dur, _) = parse_boidu_ttml_with_mode(ttml, fallback_dur_ms, false);
     (lines, word_synced, dur)
@@ -814,6 +815,43 @@ struct BoiduResp {
 }
 
 #[derive(Deserialize)]
+struct UnisonResp {
+    success: Option<bool>,
+    data: Option<UnisonData>,
+}
+
+#[derive(Deserialize)]
+struct UnisonData {
+    song: Option<String>,
+    artist: Option<String>,
+    duration: Option<f64>,
+    format: Option<String>,
+    lyrics: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LyricsPlusResp {
+    #[serde(rename = "type")]
+    sync_type: Option<String>,
+    lyrics: Option<Vec<LyricsPlusLine>>,
+}
+
+#[derive(Deserialize)]
+struct LyricsPlusLine {
+    time: Option<i64>,
+    duration: Option<i64>,
+    text: Option<String>,
+    syllabus: Option<Vec<LyricsPlusSyllable>>,
+}
+
+#[derive(Deserialize)]
+struct LyricsPlusSyllable {
+    time: Option<i64>,
+    duration: Option<i64>,
+    text: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct KugouSearchResp {
     candidates: Option<Vec<KugouCandidate>>,
 }
@@ -832,9 +870,66 @@ struct KugouDownloadResp {
     content: Option<String>,
 }
 
+/// Strip opening songwriter/producer credit banners commonly injected into KuGou, QQ Music, and NetEase LRC files.
+fn strip_lrc_credit_banners(lines: &mut Vec<LyricLine>, title: &str) {
+    let title_low = title.to_lowercase();
+    while let Some(first) = lines.first() {
+        let low = first.text.trim().to_lowercase();
+        let is_banner = first.start_ms <= 35_000
+            && (low.starts_with("written by")
+                || low.starts_with("lyrics by")
+                || low.starts_with("composed by")
+                || low.starts_with("produced by")
+                || low.starts_with("arranged by")
+                || low.starts_with("songwriter")
+                || low.starts_with("作词")
+                || low.starts_with("作曲")
+                || low.starts_with("编曲")
+                || low.starts_with("制作人")
+                || low.starts_with("混音")
+                || low.starts_with("母带")
+                || low.starts_with("词：")
+                || low.starts_with("曲：")
+                || low.starts_with("词:")
+                || low.starts_with("曲:")
+                || (first.start_ms <= 6000
+                    && (low.contains(" - ") || (!title_low.is_empty() && low.contains(&title_low)))));
+        if is_banner {
+            lines.remove(0);
+        } else {
+            break;
+        }
+    }
+}
+
+fn split_artist_candidates(artist: &str) -> Vec<String> {
+    let mut artist_candidates: Vec<String> = Vec::new();
+    for part in artist.split(|c| matches!(c, ',' | ';' | '&' | '/')) {
+        let clean = part.trim();
+        if !clean.is_empty()
+            && !artist_candidates
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(clean))
+        {
+            artist_candidates.push(clean.to_string());
+            if artist_candidates.len() >= 2 {
+                break;
+            }
+        }
+    }
+    if !artist.trim().is_empty()
+        && !artist_candidates
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(artist))
+    {
+        artist_candidates.push(artist.to_string());
+    }
+    artist_candidates
+}
+
 pub struct LyricsEngine {
     cache_dir: PathBuf,
-    provider_mode: Mutex<String>, // "auto" | "hinglish" | "boidu" | "lrclib" | "kugou"
+    provider_mode: Mutex<String>, // "auto" | "hinglish" | "unison" | "boidu" | "lyricsplus" | "lrclib" | "netease" | "qqmusic" | "kugou"
     mem_cache: Mutex<HashMap<String, LyricsResult>>,
 }
 
@@ -851,8 +946,12 @@ impl LyricsEngine {
     pub fn set_provider_mode(&self, mode: &str) -> String {
         let clean = match mode {
             "hinglish" => "hinglish",
+            "unison" => "unison",
             "boidu" => "boidu",
+            "lyricsplus" => "lyricsplus",
             "lrclib" => "lrclib",
+            "netease" => "netease",
+            "qqmusic" => "qqmusic",
             "kugou" => "kugou",
             _ => "auto",
         };
@@ -905,24 +1004,30 @@ impl LyricsEngine {
         }
 
         let result = match provider.as_str() {
-            "lrclib" => self.query_lrclib(&title, &artist, album, duration_ms),
-            "kugou" => {
-                let kg = self.query_kugou(&title, &artist, duration_ms);
-                if kg.found && kg.synced {
-                    kg
-                } else {
-                    let lrc = self.query_lrclib(&title, &artist, album, duration_ms);
-                    if lrc.found { lrc } else { kg }
-                }
+            "unison" => {
+                let r = self.query_unison(&title, &artist, duration_ms, false);
+                if r.found && r.synced { r } else { self.fallback_or(r, &title, &artist, album, duration_ms) }
             }
             "boidu" => {
-                let boidu = self.query_boidu(&title, &artist, duration_ms, false);
-                if boidu.found && boidu.synced {
-                    boidu
-                } else {
-                    let lrc = self.query_lrclib(&title, &artist, album, duration_ms);
-                    if lrc.found { lrc } else { boidu }
-                }
+                let r = self.query_boidu(&title, &artist, duration_ms, false);
+                if r.found && r.synced { r } else { self.fallback_or(r, &title, &artist, album, duration_ms) }
+            }
+            "lyricsplus" => {
+                let r = self.query_lyricsplus(&title, &artist, album, duration_ms);
+                if r.found && r.synced { r } else { self.fallback_or(r, &title, &artist, album, duration_ms) }
+            }
+            "lrclib" => self.query_lrclib(&title, &artist, album, duration_ms),
+            "netease" => {
+                let r = self.query_netease(&title, &artist, duration_ms);
+                if r.found && r.synced { r } else { self.fallback_or(r, &title, &artist, album, duration_ms) }
+            }
+            "qqmusic" => {
+                let r = self.query_qqmusic(&title, &artist, duration_ms);
+                if r.found && r.synced { r } else { self.fallback_or(r, &title, &artist, album, duration_ms) }
+            }
+            "kugou" => {
+                let r = self.query_kugou(&title, &artist, duration_ms);
+                if r.found && r.synced { r } else { self.fallback_or(r, &title, &artist, album, duration_ms) }
             }
             "hinglish" => self.query_hinglish_best(&title, &artist, album, duration_ms),
             _ => self.query_auto_best(&title, &artist, album, duration_ms),
@@ -939,21 +1044,61 @@ impl LyricsEngine {
         result
     }
 
-    /// Query Boidu (Apple Music TTML), LRCLIB, and KuGou in parallel and automatically pick
-    /// whichever candidate matches the song's exact cut & sync granularity best!
+    fn fallback_or(
+        &self,
+        primary: LyricsResult,
+        title: &str,
+        artist: &str,
+        album: &str,
+        duration_ms: i64,
+    ) -> LyricsResult {
+        let lrc = self.query_lrclib(title, artist, album, duration_ms);
+        if lrc.found { lrc } else { primary }
+    }
+
+    /// Sync-rated Auto selector (Unison > Boidu > LyricsPlus > LRCLIB > NetEase > QQ Music > KuGou):
+    /// Queries Tier 1 (Unison + Boidu + LyricsPlus + LRCLIB) in parallel; only hits Tier 2
+    /// (NetEase + QQ Music + KuGou) when Tier 1 has no synced match!
     fn query_auto_best(&self, title: &str, artist: &str, album: &str, duration_ms: i64) -> LyricsResult {
-        let (boidu_res, lrclib_res, kugou_res) = std::thread::scope(|s| {
-            let h_boidu = s.spawn(|| self.query_boidu(title, artist, duration_ms, false));
+        let (unison_res, boidu_res, lplus_res, lrclib_res) = std::thread::scope(|s| {
+            let h_u = s.spawn(|| self.query_unison(title, artist, duration_ms, false));
+            let h_b = s.spawn(|| self.query_boidu(title, artist, duration_ms, false));
+            let h_lp = s.spawn(|| self.query_lyricsplus(title, artist, album, duration_ms));
             let h_lrc = s.spawn(|| self.query_lrclib(title, artist, album, duration_ms));
-            let h_kg = s.spawn(|| self.query_kugou(title, artist, duration_ms));
-            let b = h_boidu.join().unwrap_or_else(|_| LyricsResult::empty(title, artist));
-            let l = h_lrc.join().unwrap_or_else(|_| LyricsResult::empty(title, artist));
-            let k = h_kg.join().unwrap_or_else(|_| LyricsResult::empty(title, artist));
-            (b, l, k)
+            (
+                h_u.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_b.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_lp.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_lrc.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+            )
         });
 
-        let candidates = [boidu_res, lrclib_res, kugou_res];
-        candidates
+        let tier1_best = [unison_res, boidu_res, lplus_res, lrclib_res]
+            .into_iter()
+            .max_by(|a, b| {
+                score_candidate(a, duration_ms, false)
+                    .partial_cmp(&score_candidate(b, duration_ms, false))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .unwrap_or_else(|| LyricsResult::empty(title, artist));
+
+        if tier1_best.found && tier1_best.synced && score_candidate(&tier1_best, duration_ms, false) >= 100.0 {
+            return tier1_best;
+        }
+
+        // Tier 2 parallel fallback: NetEase Cloud Music > QQ Music > KuGou
+        let (ne_res, qq_res, kg_res) = std::thread::scope(|s| {
+            let h_ne = s.spawn(|| self.query_netease(title, artist, duration_ms));
+            let h_qq = s.spawn(|| self.query_qqmusic(title, artist, duration_ms));
+            let h_kg = s.spawn(|| self.query_kugou(title, artist, duration_ms));
+            (
+                h_ne.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_qq.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_kg.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+            )
+        });
+
+        [tier1_best, ne_res, qq_res, kg_res]
             .into_iter()
             .max_by(|a, b| {
                 score_candidate(a, duration_ms, false)
@@ -964,21 +1109,25 @@ impl LyricsEngine {
     }
 
     /// Hinglish / Romanized Best Mode:
-    /// Extracts official Apple Music `hi-Latn`/`ja-Latn`/`ko-Latn` transliterations from Boidu TTML
-    /// AND compares against Romanized/Hinglish cuts on LRCLIB & KuGou in parallel!
+    /// Compares Unison & Boidu `*-Latn` studio transliterations, LyricsPlus word-synced Hinglish,
+    /// LRCLIB, and KuGou in parallel, preferring word-synced Latin/Hinglish text!
     fn query_hinglish_best(&self, title: &str, artist: &str, album: &str, duration_ms: i64) -> LyricsResult {
-        let (boidu_res, lrclib_res, kugou_res) = std::thread::scope(|s| {
-            let h_boidu = s.spawn(|| self.query_boidu(title, artist, duration_ms, true));
+        let (unison_res, boidu_res, lplus_res, lrclib_res, kugou_res) = std::thread::scope(|s| {
+            let h_u = s.spawn(|| self.query_unison(title, artist, duration_ms, true));
+            let h_b = s.spawn(|| self.query_boidu(title, artist, duration_ms, true));
+            let h_lp = s.spawn(|| self.query_lyricsplus(title, artist, album, duration_ms));
             let h_lrc = s.spawn(|| self.query_lrclib(title, artist, album, duration_ms));
             let h_kg = s.spawn(|| self.query_kugou(title, artist, duration_ms));
-            let b = h_boidu.join().unwrap_or_else(|_| LyricsResult::empty(title, artist));
-            let l = h_lrc.join().unwrap_or_else(|_| LyricsResult::empty(title, artist));
-            let k = h_kg.join().unwrap_or_else(|_| LyricsResult::empty(title, artist));
-            (b, l, k)
+            (
+                h_u.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_b.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_lp.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_lrc.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+                h_kg.join().unwrap_or_else(|_| LyricsResult::empty(title, artist)),
+            )
         });
 
-        let candidates = [boidu_res, lrclib_res, kugou_res];
-        candidates
+        [unison_res, boidu_res, lplus_res, lrclib_res, kugou_res]
             .into_iter()
             .max_by(|a, b| {
                 score_candidate(a, duration_ms, true)
@@ -998,6 +1147,438 @@ impl LyricsEngine {
         resp.into_json::<serde_json::Value>().ok()
     }
 
+    fn http_get_json_with_referer(
+        &self,
+        url: &str,
+        referer: &str,
+        timeout_secs: u64,
+    ) -> Option<serde_json::Value> {
+        let resp = ureq::get(url)
+            .set(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
+            )
+            .set("Referer", referer)
+            .set("Accept", "application/json, text/plain, */*")
+            .timeout(Duration::from_secs(timeout_secs))
+            .call()
+            .ok()?;
+        let body = resp.into_string().ok()?;
+        serde_json::from_str::<serde_json::Value>(&body).ok()
+    }
+
+    fn http_post_json_with_referer(
+        &self,
+        url: &str,
+        referer: &str,
+        timeout_secs: u64,
+    ) -> Option<serde_json::Value> {
+        let resp = ureq::post(url)
+            .set(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
+            )
+            .set("Referer", referer)
+            .set("Accept", "application/json, text/plain, */*")
+            .timeout(Duration::from_secs(timeout_secs))
+            .send_string("")
+            .ok()?;
+        let body = resp.into_string().ok()?;
+        serde_json::from_str::<serde_json::Value>(&body).ok()
+    }
+
+    /// Query Unison (Better Lyrics community richsync TTML/LRC database — top-ranked sync!).
+    fn query_unison(
+        &self,
+        title: &str,
+        artist: &str,
+        duration_ms: i64,
+        prefer_romanized: bool,
+    ) -> LyricsResult {
+        if title.is_empty() || artist.is_empty() {
+            return LyricsResult::empty(title, artist);
+        }
+        let artist_candidates = split_artist_candidates(artist);
+        for cand in &artist_candidates {
+            let url = format!(
+                "https://unison.boidu.dev/lyrics?song={}&artist={}",
+                urlencoding::encode(title),
+                urlencoding::encode(cand)
+            );
+            let Some(val) = self.http_get_json(&url, 5) else {
+                continue;
+            };
+            let Ok(resp) = serde_json::from_value::<UnisonResp>(val) else {
+                continue;
+            };
+            if resp.success != Some(true) {
+                continue;
+            }
+            let Some(data) = resp.data else {
+                continue;
+            };
+            let Some(raw) = data.lyrics.filter(|s| !s.trim().is_empty()) else {
+                continue;
+            };
+            let api_dur_ms = data
+                .duration
+                .map(|d| (d * 1000.0).round() as i64)
+                .filter(|&d| d > 0)
+                .unwrap_or(duration_ms);
+            let fmt = data.format.as_deref().unwrap_or("").to_lowercase();
+
+            if fmt == "ttml" || raw.contains("<p") {
+                let (lines, word_synced, body_dur, used_translit) =
+                    parse_boidu_ttml_with_mode(&raw, api_dur_ms, prefer_romanized);
+                if !lines.is_empty() {
+                    return LyricsResult {
+                        found: true,
+                        synced: true,
+                        word_synced,
+                        pacing_v: PACING_VERSION,
+                        source: if used_translit {
+                            "unison_hinglish".to_string()
+                        } else {
+                            "unison".to_string()
+                        },
+                        title: data.song.unwrap_or_else(|| title.to_string()),
+                        artist: data.artist.unwrap_or_else(|| artist.to_string()),
+                        duration_ms: body_dur,
+                        lines,
+                    };
+                }
+            } else if raw.contains('[') {
+                let word_synced = regexes().enhanced_word_ts.is_match(&raw);
+                let mut lines = parse_lrc(&raw, api_dur_ms);
+                strip_lrc_credit_banners(&mut lines, title);
+                if lines.len() >= 4 {
+                    return LyricsResult {
+                        found: true,
+                        synced: true,
+                        word_synced,
+                        pacing_v: PACING_VERSION,
+                        source: "unison".to_string(),
+                        title: data.song.unwrap_or_else(|| title.to_string()),
+                        artist: data.artist.unwrap_or_else(|| artist.to_string()),
+                        duration_ms: api_dur_ms,
+                        lines,
+                    };
+                }
+            }
+        }
+        LyricsResult::empty(title, artist)
+    }
+
+    /// Query LyricsPlus v2 (`lyricsplus.prjktla.my.id`) — word-by-word millisecond JSON across Apple/Spotify/Musixmatch/YouTube!
+    fn query_lyricsplus(
+        &self,
+        title: &str,
+        artist: &str,
+        album: &str,
+        duration_ms: i64,
+    ) -> LyricsResult {
+        if title.is_empty() || artist.is_empty() {
+            return LyricsResult::empty(title, artist);
+        }
+        let re = regexes();
+        let dur_sec = if duration_ms > 0 {
+            ((duration_ms as f64) / 1000.0).round() as i64
+        } else {
+            0
+        };
+        let artist_candidates = split_artist_candidates(artist);
+
+        let mut urls = Vec::new();
+        for cand in &artist_candidates {
+            let mut u = format!(
+                "https://lyricsplus.prjktla.my.id/v2/lyrics/get?title={}&artist={}",
+                urlencoding::encode(title),
+                urlencoding::encode(cand)
+            );
+            if !album.is_empty() {
+                u.push_str(&format!("&album={}", urlencoding::encode(album)));
+            }
+            if dur_sec > 0 {
+                u.push_str(&format!("&duration={}", dur_sec));
+            }
+            urls.push(u);
+        }
+
+        for url in urls {
+            let Some(val) = self.http_get_json(&url, 5) else {
+                continue;
+            };
+            let Ok(resp) = serde_json::from_value::<LyricsPlusResp>(val) else {
+                continue;
+            };
+            let Some(raw_lines) = resp.lyrics else {
+                continue;
+            };
+            if raw_lines.is_empty() {
+                continue;
+            }
+
+            let is_word_type = resp
+                .sync_type
+                .as_deref()
+                .map(|s| s.eq_ignore_ascii_case("word"))
+                .unwrap_or(false);
+            let mut lines: Vec<LyricLine> = Vec::with_capacity(raw_lines.len());
+            let mut any_word_synced = false;
+
+            for rl in &raw_lines {
+                let start_ms = rl.time.unwrap_or(-1);
+                if start_ms < 0 {
+                    continue;
+                }
+                let dur = rl.duration.unwrap_or(0).max(0);
+                let end_ms = if dur > 0 { start_ms + dur } else { start_ms + 3000 };
+                let text = rl.text.as_deref().unwrap_or("").trim().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+
+                // Merge syllable-level timing chunks into whole words using trailing space boundaries
+                let mut words: Vec<LyricWord> = Vec::new();
+                if let Some(syls) = rl.syllabus.as_ref().filter(|v| !v.is_empty()) {
+                    let mut cur_word = String::new();
+                    let mut cur_start: i64 = -1;
+                    let mut cur_end: i64 = -1;
+
+                    for syl in syls {
+                        let s_txt = syl.text.as_deref().unwrap_or("");
+                        let s_time = syl.time.unwrap_or(start_ms);
+                        let s_dur = syl.duration.unwrap_or(180).max(40);
+                        let s_end = s_time + s_dur;
+                        let trimmed = s_txt.trim();
+                        let ends_with_space = s_txt.chars().last().map(|c| c.is_whitespace()).unwrap_or(false);
+                        let starts_with_space = s_txt.chars().next().map(|c| c.is_whitespace()).unwrap_or(false);
+
+                        if starts_with_space && !cur_word.is_empty() {
+                            let clean = re.non_word.replace_all(&cur_word.to_lowercase(), "").to_string();
+                            words.push(LyricWord {
+                                word: cur_word.clone(),
+                                clean,
+                                start_ms: cur_start,
+                                end_ms: cur_end.max(cur_start + 80),
+                            });
+                            cur_word.clear();
+                            cur_start = -1;
+                        }
+
+                        if !trimmed.is_empty() {
+                            if cur_start < 0 {
+                                cur_start = s_time;
+                            }
+                            cur_word.push_str(trimmed);
+                            cur_end = s_end;
+                        }
+
+                        if ends_with_space && !cur_word.is_empty() {
+                            let clean = re.non_word.replace_all(&cur_word.to_lowercase(), "").to_string();
+                            words.push(LyricWord {
+                                word: cur_word.clone(),
+                                clean,
+                                start_ms: cur_start,
+                                end_ms: cur_end.max(cur_start + 80),
+                            });
+                            cur_word.clear();
+                            cur_start = -1;
+                        }
+                    }
+                    if !cur_word.is_empty() {
+                        let clean = re.non_word.replace_all(&cur_word.to_lowercase(), "").to_string();
+                        words.push(LyricWord {
+                            word: cur_word,
+                            clean,
+                            start_ms: cur_start.max(start_ms),
+                            end_ms: cur_end.max(cur_start + 80),
+                        });
+                    }
+                    if !words.is_empty() {
+                        any_word_synced = true;
+                    }
+                }
+
+                if words.is_empty() {
+                    words = build_words_for_line_paced(&text, start_ms, end_ms, None, dur > 0);
+                }
+
+                lines.push(LyricLine {
+                    start_ms,
+                    end_ms,
+                    text,
+                    instrumental: false,
+                    words,
+                });
+            }
+
+            if lines.len() >= 4 {
+                lines.sort_by_key(|l| l.start_ms);
+                let last_end = lines.last().map(|l| l.end_ms).unwrap_or(duration_ms);
+                let out_dur = if duration_ms > 0 { duration_ms } else { last_end };
+                return LyricsResult {
+                    found: true,
+                    synced: true,
+                    word_synced: is_word_type || any_word_synced,
+                    pacing_v: PACING_VERSION,
+                    source: "lyricsplus".to_string(),
+                    title: title.to_string(),
+                    artist: artist.to_string(),
+                    duration_ms: out_dur,
+                    lines,
+                };
+            }
+        }
+
+        LyricsResult::empty(title, artist)
+    }
+
+    /// Query NetEase Cloud Music (`music.163.com`) synced LRC catalog.
+    fn query_netease(&self, title: &str, artist: &str, duration_ms: i64) -> LyricsResult {
+        if title.is_empty() {
+            return LyricsResult::empty(title, artist);
+        }
+        let primary_artist = split_artist_candidates(artist)
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        let query = if primary_artist.is_empty() {
+            title.to_string()
+        } else {
+            format!("{} {}", title, primary_artist)
+        };
+        let search_url = format!(
+            "https://music.163.com/api/search/get?s={}&type=1&limit=5",
+            urlencoding::encode(&query)
+        );
+        let Some(val) = self.http_post_json_with_referer(&search_url, "https://music.163.com/", 5) else {
+            return LyricsResult::empty(title, artist);
+        };
+        let Some(songs) = val.pointer("/result/songs").and_then(|v| v.as_array()) else {
+            return LyricsResult::empty(title, artist);
+        };
+
+        let mut cands: Vec<(i64, i64, String)> = songs
+            .iter()
+            .filter_map(|s| {
+                let id = s.get("id")?.as_i64()?;
+                let dur = s.get("duration").and_then(|d| d.as_i64()).unwrap_or(0);
+                let name = s.get("name").and_then(|n| n.as_str()).unwrap_or(title).to_string();
+                Some((id, dur, name))
+            })
+            .collect();
+        if duration_ms > 0 {
+            cands.sort_by_key(|(_, d, _)| if *d > 0 { (*d - duration_ms).abs() } else { 999_999 });
+        }
+
+        for (id, cand_dur, cand_title) in cands.into_iter().take(2) {
+            let lyr_url = format!("https://music.163.com/api/song/lyric?id={}&lv=1&kv=1&tv=-1", id);
+            let Some(lval) = self.http_get_json_with_referer(&lyr_url, "https://music.163.com/", 5) else {
+                continue;
+            };
+            let Some(lrc_raw) = lval.pointer("/lrc/lyric").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if !lrc_raw.contains('[') {
+                continue;
+            }
+            let out_dur = if cand_dur > 0 { cand_dur } else { duration_ms };
+            let mut lines = parse_lrc(lrc_raw, out_dur);
+            strip_lrc_credit_banners(&mut lines, title);
+            if lines.len() >= 4 {
+                return LyricsResult {
+                    found: true,
+                    synced: true,
+                    word_synced: false,
+                    pacing_v: PACING_VERSION,
+                    source: "netease".to_string(),
+                    title: cand_title,
+                    artist: artist.to_string(),
+                    duration_ms: out_dur,
+                    lines,
+                };
+            }
+        }
+
+        LyricsResult::empty(title, artist)
+    }
+
+    /// Query QQ Music (`c.y.qq.com`) synced LRC catalog.
+    fn query_qqmusic(&self, title: &str, artist: &str, duration_ms: i64) -> LyricsResult {
+        if title.is_empty() {
+            return LyricsResult::empty(title, artist);
+        }
+        let primary_artist = split_artist_candidates(artist)
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        let query = if primary_artist.is_empty() {
+            title.to_string()
+        } else {
+            format!("{} {}", title, primary_artist)
+        };
+        let search_url = format!(
+            "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={}&format=json&p=1&n=5",
+            urlencoding::encode(&query)
+        );
+        let referer = "https://y.qq.com/portal/player.html";
+        let Some(val) = self.http_get_json_with_referer(&search_url, referer, 5) else {
+            return LyricsResult::empty(title, artist);
+        };
+        let Some(list) = val.pointer("/data/song/list").and_then(|v| v.as_array()) else {
+            return LyricsResult::empty(title, artist);
+        };
+
+        let mut cands: Vec<(String, i64, String)> = list
+            .iter()
+            .filter_map(|s| {
+                let mid = s.get("songmid")?.as_str()?.to_string();
+                let dur = s.get("interval").and_then(|d| d.as_i64()).unwrap_or(0) * 1000;
+                let name = s.get("songname").and_then(|n| n.as_str()).unwrap_or(title).to_string();
+                Some((mid, dur, name))
+            })
+            .collect();
+        if duration_ms > 0 {
+            cands.sort_by_key(|(_, d, _)| if *d > 0 { (*d - duration_ms).abs() } else { 999_999 });
+        }
+
+        for (mid, cand_dur, cand_title) in cands.into_iter().take(2) {
+            let lyr_url = format!(
+                "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={}&format=json&nobase64=1&g_tk=5381",
+                urlencoding::encode(&mid)
+            );
+            let Some(lval) = self.http_get_json_with_referer(&lyr_url, referer, 5) else {
+                continue;
+            };
+            let Some(raw) = lval.get("lyric").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if !raw.contains('[') {
+                continue;
+            }
+            let decoded = unescape_xml(raw);
+            let out_dur = if cand_dur > 0 { cand_dur } else { duration_ms };
+            let mut lines = parse_lrc(&decoded, out_dur);
+            strip_lrc_credit_banners(&mut lines, title);
+            if lines.len() >= 4 {
+                return LyricsResult {
+                    found: true,
+                    synced: true,
+                    word_synced: false,
+                    pacing_v: PACING_VERSION,
+                    source: "qqmusic".to_string(),
+                    title: cand_title,
+                    artist: artist.to_string(),
+                    duration_ms: out_dur,
+                    lines,
+                };
+            }
+        }
+
+        LyricsResult::empty(title, artist)
+    }
+
     fn query_boidu(
         &self,
         title: &str,
@@ -1013,29 +1594,7 @@ impl LyricsEngine {
         } else {
             0
         };
-
-        // Split multi-artist metadata (e.g. "Arijit Singh, Pritam, Amitabh Bhattacharya") so Boidu
-        // matches official Apple Music TTML on Hindi/Bollywood, K-Pop, and multi-artist collabs!
-        let mut artist_candidates: Vec<String> = Vec::new();
-        for part in artist.split(|c| matches!(c, ',' | ';' | '&' | '/')) {
-            let clean = part.trim();
-            if !clean.is_empty()
-                && !artist_candidates
-                    .iter()
-                    .any(|a| a.eq_ignore_ascii_case(clean))
-            {
-                artist_candidates.push(clean.to_string());
-                if artist_candidates.len() >= 2 {
-                    break;
-                }
-            }
-        }
-        if !artist_candidates
-            .iter()
-            .any(|a| a.eq_ignore_ascii_case(artist))
-        {
-            artist_candidates.push(artist.to_string());
-        }
+        let artist_candidates = split_artist_candidates(artist);
 
         let mut urls = Vec::new();
         if dur_sec > 0 {
@@ -1162,23 +1721,7 @@ impl LyricsEngine {
             };
             let cand_dur = cand.duration.filter(|&d| d > 0).unwrap_or(duration_ms);
             let mut lines = parse_lrc(&lrc_raw, cand_dur);
-            // Strip KuGou's metadata / songwriter credit banner lines at the very start of the LRC
-            while let Some(first) = lines.first() {
-                let low = first.text.to_lowercase();
-                let is_banner = first.start_ms <= 6000
-                    && (low.contains(" - ")
-                        || low.starts_with("written by")
-                        || low.starts_with("lyrics by")
-                        || low.starts_with("composed by")
-                        || low.starts_with("词：")
-                        || low.starts_with("曲：")
-                        || low.contains(&title.to_lowercase()));
-                if is_banner {
-                    lines.remove(0);
-                } else {
-                    break;
-                }
-            }
+            strip_lrc_credit_banners(&mut lines, title);
             if lines.len() >= 4 {
                 return LyricsResult {
                     found: true,
@@ -1324,14 +1867,20 @@ fn score_candidate(res: &LyricsResult, target_dur_ms: i64, prefer_romanized: boo
     }
     let mut score = if res.synced { 100.0 } else { 10.0 };
     if res.word_synced {
-        score += 55.0; // Huge preference for real millisecond word-by-word Boidu TTML / enhanced LRC!
+        score += 55.0; // Huge preference for true millisecond word-by-word timing!
     }
-    if (res.source == "boidu" || res.source == "boidu_hinglish") && res.synced {
-        // Official Apple Music TTML provides exact per-line begin+end studio timestamps
-        score += 12.0;
-    } else if res.source == "lrclib" && res.synced {
-        // Clean community LRC preferred over KuGou when both match exact duration
-        score += 4.0;
+    // Sync-quality tier priority: Unison > Boidu > LyricsPlus > LRCLIB > NetEase > QQ Music > KuGou
+    if res.synced {
+        score += match res.source.as_str() {
+            "unison" | "unison_hinglish" => 18.0,
+            "boidu" | "boidu_hinglish" => 15.0,
+            "lyricsplus" => 12.0,
+            "lrclib" => 8.0,
+            "netease" => 5.0,
+            "qqmusic" => 3.0,
+            "kugou" => 1.0,
+            _ => 0.0,
+        };
     }
     if prefer_romanized {
         let ratio = latin_script_ratio(&res.lines);
@@ -1340,8 +1889,8 @@ fn score_candidate(res: &LyricsResult, target_dur_ms: i64, prefer_romanized: boo
         } else {
             score -= 32.0;
         }
-        if res.source == "boidu_hinglish" {
-            score += 14.0; // Studio-authored Apple Music hi-Latn / ja-Latn / ko-Latn!
+        if res.source == "boidu_hinglish" || res.source == "unison_hinglish" {
+            score += 14.0; // Studio-authored hi-Latn / ja-Latn / ko-Latn!
         }
     }
     if target_dur_ms > 0 && res.duration_ms > 0 {
@@ -1434,19 +1983,37 @@ mod tests {
         let engine = LyricsEngine::new(tmp);
         engine.set_provider_mode("auto");
 
-        // Coldplay - Yellow (267s) has real word-by-word Boidu TTML -> Auto should pick Boidu!
+        // Coldplay - Yellow (267s) has real word-by-word Unison / Boidu / LyricsPlus -> Auto should pick Unison!
         let yellow = engine.fetch_lyrics("Yellow", "Coldplay", "", 267_000);
         assert!(yellow.found && yellow.synced, "Yellow should find synced lyrics");
         println!(
-            "Yellow -> source={} word_synced={} lines={} dur={}ms first_ms={}",
+            "Yellow (Auto) -> source={} word_synced={} lines={} dur={}ms first_ms={} first=\"{}\"",
             yellow.source,
             yellow.word_synced,
             yellow.lines.len(),
             yellow.duration_ms,
-            yellow.lines.first().map(|l| l.start_ms).unwrap_or(0)
+            yellow.lines.first().map(|l| l.start_ms).unwrap_or(0),
+            yellow.lines.first().map(|l| l.text.as_str()).unwrap_or("")
         );
-        assert_eq!(yellow.source, "boidu");
+        assert!(matches!(yellow.source.as_str(), "unison" | "boidu" | "lyricsplus"));
         assert!(yellow.word_synced);
+
+        // Verify ALL 7 providers individually & compare their actual sync timestamps on Coldplay - Yellow!
+        for prov in ["unison", "boidu", "lyricsplus", "lrclib", "netease", "qqmusic", "kugou"] {
+            engine.set_provider_mode(prov);
+            let r = engine.fetch_lyrics("Yellow", "Coldplay", "", 267_000);
+            println!(
+                "  [{prov:10}] found={} source={:10} word={} lines={:2} first_ms={:6} first=\"{}\"",
+                r.found,
+                r.source,
+                r.word_synced,
+                r.lines.len(),
+                r.lines.first().map(|l| l.start_ms).unwrap_or(0),
+                r.lines.first().map(|l| l.text.as_str()).unwrap_or("")
+            );
+            assert!(r.found && r.synced, "Provider {prov} should return synced lyrics for Yellow");
+        }
+        engine.set_provider_mode("auto");
 
         // Anson Seabra - Welcome to Wonderland (199.1s) -> Auto should fallback cleanly to LRCLIB exact 199s cut (first_ms ~15070, NOT 16130)!
         let wonder = engine.fetch_lyrics("Welcome to Wonderland", "Anson Seabra", "", 199_141);
@@ -1483,7 +2050,7 @@ mod tests {
             raabta.duration_ms,
             raabta.lines.first().map(|l| l.start_ms).unwrap_or(0)
         );
-        assert_eq!(raabta.source, "boidu");
+        assert!(matches!(raabta.source.as_str(), "unison" | "boidu" | "lyricsplus"));
 
         // Hinglish / Romanized mode on Raabta -> official Apple Music hi-Latn Hinglish!
         engine.set_provider_mode("hinglish");

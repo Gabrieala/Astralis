@@ -1361,10 +1361,20 @@ async function pollBackend() {
         setLyricsPill("SYNCING…", "loading");
       } else if (media.lyrics_status === "synced") {
         const src = (media.lyrics_source || "").toLowerCase();
-        const badge = src === "boidu_hinglish"
+        const badge = src === "unison_hinglish"
+          ? "UNISON · HINGLISH"
+          : src === "unison"
+          ? (media.lyrics_word_synced ? "UNISON · WORD" : "UNISON · SYNC")
+          : src === "boidu_hinglish"
           ? "BOIDU · HINGLISH"
           : src === "boidu"
           ? (media.lyrics_word_synced ? "BOIDU · WORD" : "BOIDU · SYNC")
+          : src === "lyricsplus"
+          ? (media.lyrics_word_synced ? "LYRICS+ · WORD" : "LYRICS+ · SYNC")
+          : src === "netease"
+          ? "NETEASE · SYNC"
+          : src === "qqmusic"
+          ? "QQ MUSIC · SYNC"
           : src === "kugou"
           ? "KUGOU · SYNC"
           : (media.lyrics_word_synced ? "LRCLIB · WORD" : "LRCLIB · SYNC");
@@ -1452,7 +1462,7 @@ function getRenderBudget() {
       return { fps: 60, maxDpr: 1.0, nebulaScale: 0.20, nebulaSkip: 4 };
     }
     return isPlaying
-      ? { fps: 24, maxDpr: 1.0, nebulaScale: 0.20, nebulaSkip: 4 }
+      ? { fps: 36, maxDpr: 1.0, nebulaScale: 0.20, nebulaSkip: 4 }
       : { fps: 10, maxDpr: 1.0, nebulaScale: 0.20, nebulaSkip: 6 };
   }
   const isBg = state.windowMode === "background" || !state.isFocused;

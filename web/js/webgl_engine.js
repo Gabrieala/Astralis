@@ -38,12 +38,18 @@ uniform float uBass;
 uniform float uAmbience;
 uniform float uIsHemi;
 uniform float uDomeScale;
+uniform float uDomeKick;
+uniform float uDomeDrive;
+uniform vec2 uWave1;
+uniform vec2 uWave2;
+uniform vec2 uDomeShake;
 uniform vec3 uCamF;
 uniform vec3 uCamR;
 uniform vec3 uCamU;
 uniform vec3 uColorA;
 uniform vec3 uColorB;
 uniform vec3 uColorC;
+uniform vec3 uLineTint;
 
 // Fast value noise (super light on integrated GPUs)
 float hash(vec2 p) {
@@ -84,15 +90,16 @@ void main() {
   float amb = clamp(uAmbience, 0.0, 1.5);
 
   // TRUE 3D MILKY WAY GALACTIC PLANE IN HEMISPHERE MODE!
-  // Rotates in 100% real 3D lock-step with the 88 constellations & Hipparcos stars!
+  // Rotates, shakes & vibrates in 100% real 3D lock-step with the 88 constellations & Hipparcos stars!
   if (uIsHemi > 0.5) {
-    float rProj = length(p);
+    vec2 sp = p - uDomeShake;
+    float rProj = length(sp);
     float theta = (rProj / max(0.25, uDomeScale)) * 1.5707963;
     if (theta > 1.62) {
       outColor = vec4(baseNight, 1.0);
       return;
     }
-    vec2 dir2 = rProj > 1e-4 ? (p / rProj) : vec2(0.0);
+    vec2 dir2 = rProj > 1e-4 ? (sp / rProj) : vec2(0.0);
     vec3 dir3 = normalize(uCamF * cos(theta) + (uCamR * dir2.x + uCamU * dir2.y) * sin(theta));
 
     // Real North Galactic Pole (RA = 192.86°, Dec = +27.13°) & Galactic Center (Sagittarius: RA = 266.4°, Dec = -29.0°)
@@ -102,23 +109,38 @@ void main() {
     float galCore = max(0.0, dot(dir3, galCenter));
 
     // Organic galactic dust clouds & dark Great Rift lane along the true Milky Way plane!
-    vec2 gCoord = vec2(atan(dir3.z, dir3.x) * 2.4, galLat * 5.2);
+    float galLon = (abs(dir3.x) + abs(dir3.z) > 1e-5) ? atan(dir3.z, dir3.x) : 0.0;
+    vec2 gCoord = vec2(galLon * 2.4, galLat * 5.2);
     float n1 = fbm(gCoord * 1.15);
     float n2 = fbm(gCoord * 2.4 + vec2(3.1, -1.7));
 
     float band = exp(-galLat * galLat * 18.0) * (0.45 + 0.55 * n1);
     // Authentic dark dust rift running down the center of the Milky Way (Cygnus -> Sagittarius!)
-    float rift = 1.0 - 0.58 * exp(-(galLat + (n2 - 0.5) * 0.08) * (galLat + (n2 - 0.5) * 0.08) * 145.0) * smoothstep(0.15, 0.85, n2);
-    float coreBulge = pow(galCore, 4.0) * exp(-galLat * galLat * 9.0);
+    float riftD = galLat + (n2 - 0.5) * 0.08;
+    float rift = 1.0 - 0.58 * exp(-(riftD * riftD) * 145.0) * smoothstep(0.15, 0.85, n2);
+    float gc2 = galCore * galCore;
+    float coreBulge = (gc2 * gc2) * exp(-galLat * galLat * 9.0);
 
     vec3 mwCool = vec3(0.11, 0.16, 0.28);
     vec3 mwWarm = vec3(0.24, 0.20, 0.16);
-    vec3 col = baseNight;
-    col += mix(mwCool, uColorB * 1.4, 0.35) * band * rift * (0.52 + uEnergy * 0.14) * amb;
-    col += mix(mwWarm, uColorC * 0.75, 0.35) * coreBulge * rift * (0.65 + uBass * 0.15) * amb;
+    float drive = clamp(uDomeDrive, 0.0, 1.0);
+    float kick = clamp(uDomeKick, 0.0, 1.0);
+    vec3 vivid = max(uLineTint, vec3(0.28, 0.48, 0.88));
 
-    // Gentle horizon extinction near 90° dome boundary
-    float edgeFade = smoothstep(1.60, 1.18, theta);
+    vec3 col = baseNight;
+    // 1. Subtle natural Milky Way plane & galactic core (gentle musical breathing, never blinding!)
+    float mwPulse = 0.48 + uEnergy * 0.10 + kick * (0.06 + 0.14 * drive);
+    float corePulse = 0.58 + uBass * (0.10 + 0.14 * drive) + kick * (0.08 + 0.16 * drive);
+    col += mix(mwCool, uColorB * 1.35, 0.32) * band * rift * mwPulse * amb;
+    col += mix(mwWarm, uColorC * 0.78, 0.32) * coreBulge * rift * corePulse * amb;
+
+    // 2. Barely-visible velvet atmospheric hue over the globe (keeps lyrics & stars 100% crisp!)
+    float canopyShape = exp(-theta * theta * 1.65) * (0.72 + 0.28 * n1);
+    float canopyAmt = (0.008 + uBass * 0.012 * drive + kick * (0.008 + 0.016 * drive)) * amb;
+    col += mix(uColorB * 1.15, vivid * 0.42, 0.45) * canopyShape * canopyAmt;
+
+    // Gentle horizon extinction near 90° dome boundary (zero side flashes!)
+    float edgeFade = smoothstep(1.62, 1.24, theta);
     col = mix(baseNight, col, edgeFade);
     outColor = vec4(col, 1.0);
     return;
@@ -284,26 +306,26 @@ void main() {
   // Taper delicately near the star endpoints so lines melt into star coronas
   float endFade = smoothstep(0.0, 0.08, u) * smoothstep(1.0, 0.92, u);
 
-  // Crisp luminous core + beat-reactive glowing aura
-  float beatW = clamp((vMeta.w - 1.15) * 0.55, 0.0, 1.0);
-  float core = exp(-v * v * mix(24.0, 11.0, beatW));
-  float halo = exp(-v * v * mix(4.6, 2.4, beatW)) * mix(0.42, 0.85, beatW);
+  // Crisp luminous core + restrained beat-reactive glowing aura (never overwhelms lyrics!)
+  float beatW = clamp((vMeta.w - 1.16) * 0.36, 0.0, 1.0);
+  float core = exp(-v * v * mix(26.0, 16.0, beatW));
+  float halo = exp(-v * v * mix(5.2, 3.3, beatW)) * mix(0.32, 0.55, beatW);
   float beam = (core + halo) * visible * endFade * alpha;
 
   // Weaving spark right at the advancing tip while the filament draws itself
   float tipDist = abs(u - drawP);
   float tipSpark = (drawP > 0.03 && drawP < 0.985)
-    ? exp(-tipDist * tipDist * 420.0) * exp(-v * v * 6.0) * 1.45 * alpha
+    ? exp(-tipDist * tipDist * 420.0) * exp(-v * v * 6.0) * 1.15 * alpha
     : 0.0;
 
-  // Traveling beat wave along constellation lines (visibly reactive on kicks/snares, softer than star-to-star spark!)
+  // Traveling beat wave along constellation lines (tasteful pulse without blowing out text!)
   float pulseGlow = 0.0;
   if (pulseP >= 0.0 && pulseP <= 1.25) {
     float pd = abs(u - pulseP);
-    pulseGlow = exp(-pd * pd * 34.0) * exp(-v * v * 4.5) * visible * alpha * 0.92;
+    pulseGlow = exp(-pd * pd * 36.0) * exp(-v * v * 4.8) * visible * alpha * 0.50;
   }
 
-  vec3 baseCol = mix(uLineTint, vec3(0.96, 0.98, 1.0), core * (0.28 + beatW * 0.34));
+  vec3 baseCol = mix(uLineTint, vec3(0.96, 0.98, 1.0), core * (0.20 + beatW * 0.18));
   vec3 sparkCol = mix(uStarTint, vec3(1.0, 0.97, 0.90), 0.52);
 
   vec3 finalCol = baseCol * beam + sparkCol * (tipSpark + pulseGlow);
@@ -556,7 +578,8 @@ void main() {
     float turb = snoise(rp * 6.5 + vec2(phase * 13.0)) * 0.14;
     float rd = d + turb * (phase > 0.7 ? 1.4 : 0.45);
     // Glowing ionized torus shell (O-III cyan-teal inner rim -> H-alpha coral outer rim)
-    float shell = exp(-pow((rd - 0.46) * 5.2, 2.0));
+    float shellD = (rd - 0.46) * 5.2;
+    float shell = exp(-(shellD * shellD));
     float innerGas = exp(-d * d * 5.5) * 0.34;
     float centralStar = exp(-d * d * 120.0) * 0.95;
 
@@ -588,7 +611,8 @@ void main() {
     float arms = pow(armWave, 1.65) * exp(-gr * 2.6) * smoothstep(0.08, 0.26, gr);
     float clumpy = 0.68 + 0.32 * snoise(gp * 7.5 + vec2(phase * 11.0));
     // Subtle dark equatorial dust lane for edge-on/tilted spirals
-    float dustLane = phase < 0.35 ? (1.0 - 0.52 * exp(-pow((rp.y + 0.04) * 18.0, 2.0)) * exp(-rp.x * rp.x * 2.5)) : 1.0;
+    float dustD = (rp.y + 0.04) * 18.0;
+    float dustLane = phase < 0.35 ? (1.0 - 0.52 * exp(-(dustD * dustD)) * exp(-rp.x * rp.x * 2.5)) : 1.0;
 
     vec3 coreCol = vec3(1.00, 0.91, 0.74);
     vec3 armCol = vec3(0.68, 0.82, 1.00);
@@ -644,7 +668,8 @@ void main() {
     float rr = length(ringP);
     float inRing = smoothstep(0.30, 0.36, rr) * (1.0 - smoothstep(0.66, 0.75, rr));
     // Authentic Cassini Division dark gap around rr = 0.52
-    float cassini = 1.0 - 0.72 * exp(-pow((rr - 0.52) * 28.0, 2.0));
+    float casD = (rr - 0.52) * 28.0;
+    float cassini = 1.0 - 0.72 * exp(-(casD * casD));
     float ringBands = 0.78 + 0.22 * sin(rr * 64.0);
     vec3 ringCol = mix(vec3(0.66, 0.58, 0.44), vec3(0.88, 0.81, 0.64), ringBands) * cassini;
     float ringA = inRing * (0.58 * cassini);
@@ -849,12 +874,18 @@ export class WebGLConstellationEngine {
       ambience: gl.getUniformLocation(this.nebulaProg, "uAmbience"),
       isHemi: gl.getUniformLocation(this.nebulaProg, "uIsHemi"),
       domeScale: gl.getUniformLocation(this.nebulaProg, "uDomeScale"),
+      domeKick: gl.getUniformLocation(this.nebulaProg, "uDomeKick"),
+      domeDrive: gl.getUniformLocation(this.nebulaProg, "uDomeDrive"),
+      wave1: gl.getUniformLocation(this.nebulaProg, "uWave1"),
+      wave2: gl.getUniformLocation(this.nebulaProg, "uWave2"),
+      domeShake: gl.getUniformLocation(this.nebulaProg, "uDomeShake"),
       camF: gl.getUniformLocation(this.nebulaProg, "uCamF"),
       camR: gl.getUniformLocation(this.nebulaProg, "uCamR"),
       camU: gl.getUniformLocation(this.nebulaProg, "uCamU"),
       colorA: gl.getUniformLocation(this.nebulaProg, "uColorA"),
       colorB: gl.getUniformLocation(this.nebulaProg, "uColorB"),
       colorC: gl.getUniformLocation(this.nebulaProg, "uColorC"),
+      lineTint: gl.getUniformLocation(this.nebulaProg, "uLineTint"),
     };
 
     // 1b. Blit FBO
@@ -1083,12 +1114,18 @@ export class WebGLConstellationEngine {
         gl.uniform1f(this.nebulaU.ambience, effectiveAmbience);
         gl.uniform1f(this.nebulaU.isHemi, isHemi ? 1.0 : 0.0);
         gl.uniform1f(this.nebulaU.domeScale, physics.domeScale || 1.12);
+        gl.uniform1f(this.nebulaU.domeKick, physics.domeKick || 0.0);
+        gl.uniform1f(this.nebulaU.domeDrive, physics.songIntensity || 0.0);
+        gl.uniform2f(this.nebulaU.wave1, physics.domeWave1Pos ?? 2.0, physics.domeWave1Amp ?? 0.0);
+        gl.uniform2f(this.nebulaU.wave2, physics.domeWave2Pos ?? 2.0, physics.domeWave2Amp ?? 0.0);
+        gl.uniform2f(this.nebulaU.domeShake, physics.domeShakeX || 0.0, physics.domeShakeY || 0.0);
         gl.uniform3fv(this.nebulaU.camF, physics.camForward || [0, 0, 1]);
-        gl.uniform3fv(this.nebulaU.camR, physics.camRight || [1, 0, 0]);
-        gl.uniform3fv(this.nebulaU.camU, physics.camUp || [0, 1, 0]);
+        gl.uniform3fv(this.nebulaU.camR, physics.renderRight || physics.camRight || [1, 0, 0]);
+        gl.uniform3fv(this.nebulaU.camU, physics.renderUp || physics.camUp || [0, 1, 0]);
         gl.uniform3fv(this.nebulaU.colorA, pal.a);
         gl.uniform3fv(this.nebulaU.colorB, pal.b);
         gl.uniform3fv(this.nebulaU.colorC, pal.c);
+        gl.uniform3fv(this.nebulaU.lineTint, pal.lineTint);
         gl.bindVertexArray(this.emptyVao);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       }
